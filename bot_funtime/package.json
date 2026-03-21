@@ -1,0 +1,22 @@
+{
+  "name": "bot_funtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minecraft auction scanner with financial model and OpenAI market analysis.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node src/index.js --help"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "canvas": "^3.2.1",
+    "dotenv": "^16.6.1",
+    "mineflayer": "^4.35.0",
+    "openai": "^6.1.0",
+    "prismarine-nbt": "^2.7.0",
+    "prismarine-viewer": "^1.33.0"
+  }
+}
