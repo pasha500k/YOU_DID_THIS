@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -15,6 +16,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DATA_ROOT = Path.home() / "PycharmProjects" / "data"
 ENV_FILE = PROJECT_ROOT / ".env"
+DEFAULT_PUBLIC_HOST = "letovoai.ru"
+DEFAULT_PUBLIC_SITE_URL = "https://letovoai.ru"
 
 
 def _parse_id_list(raw_value: str | None) -> set[int]:
@@ -67,19 +70,27 @@ class Settings(BaseSettings):
     vk_uploader_user_ids_raw: str = Field(default="", alias="VK_UPLOADER_USER_IDS")
 
     database_path: Path = Field(default=DEFAULT_DATA_ROOT / "rag_memory.db", alias="DATABASE_PATH")
+    database_url: str = Field(default="", alias="DATABASE_URL")
     media_cache_dir: Path = Field(default=DEFAULT_DATA_ROOT / "media_cache", alias="MEDIA_CACHE_DIR")
     video_download_dir: Path = Field(default=DEFAULT_DATA_ROOT / "downloads" / "videos", alias="VIDEO_DOWNLOAD_DIR")
     homosap_video_path: Path = Field(default=DEFAULT_DATA_ROOT / "HOMOSAP.mp4", alias="HOMOSAP_VIDEO_PATH")
 
     local_upload_enabled: bool = Field(default=True, alias="LOCAL_UPLOAD_ENABLED")
-    local_upload_host: str = Field(default="127.0.0.1", alias="LOCAL_UPLOAD_HOST")
+    local_upload_host: str = Field(default="0.0.0.0", alias="LOCAL_UPLOAD_HOST")
     local_upload_port: int = Field(default=8787, alias="LOCAL_UPLOAD_PORT")
     local_upload_password: str = Field(default="Hehetoto123", alias="LOCAL_UPLOAD_PASSWORD")
     local_upload_token: str = Field(default="", alias="LOCAL_UPLOAD_TOKEN")
-    local_upload_public_url: str = Field(default="", alias="LOCAL_UPLOAD_PUBLIC_URL")
+    local_upload_public_url: str = Field(
+        default=f"http://{DEFAULT_PUBLIC_HOST}:8787",
+        alias="LOCAL_UPLOAD_PUBLIC_URL",
+    )
     public_web_enabled: bool = Field(default=True, alias="PUBLIC_WEB_ENABLED")
-    public_web_host: str = Field(default="127.0.0.1", alias="PUBLIC_WEB_HOST")
+    public_web_host: str = Field(default="0.0.0.0", alias="PUBLIC_WEB_HOST")
     public_web_port: int = Field(default=8790, alias="PUBLIC_WEB_PORT")
+    public_web_public_url: str = Field(
+        default=DEFAULT_PUBLIC_SITE_URL,
+        alias="PUBLIC_WEB_PUBLIC_URL",
+    )
     public_web_password: str = Field(default="", alias="PUBLIC_WEB_PASSWORD")
 
     answer_model: str = Field(default="gpt-4o-mini", alias="ANSWER_MODEL")
@@ -87,6 +98,12 @@ class Settings(BaseSettings):
     vision_model: str = Field(default="gpt-4o", alias="VISION_MODEL")
     transcription_model: str = Field(default="gpt-4o-mini-transcribe", alias="TRANSCRIPTION_MODEL")
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
+    openai_web_search_enabled: bool = Field(default=True, alias="OPENAI_WEB_SEARCH_ENABLED")
+    openai_web_search_context_size: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        alias="OPENAI_WEB_SEARCH_CONTEXT_SIZE",
+    )
+    openai_web_search_max_tool_calls: int = Field(default=3, alias="OPENAI_WEB_SEARCH_MAX_TOOL_CALLS")
 
     max_context_chunks: int = Field(default=8, alias="MAX_CONTEXT_CHUNKS")
     conversation_context_messages: int = Field(default=5, alias="CONTEXT_MESSAGES")
@@ -152,6 +169,8 @@ class Settings(BaseSettings):
 
     @property
     def public_web_base_url(self) -> str:
+        if self.public_web_public_url.strip():
+            return self.public_web_public_url.strip().rstrip("/")
         return f"http://{self.public_web_host}:{self.public_web_port}"
 
     def ensure_directories(self) -> None:

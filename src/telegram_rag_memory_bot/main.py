@@ -35,7 +35,7 @@ async def _run() -> None:
     settings = get_settings()
     process_lock = ProcessLock(settings.database_path.parent / "telegram_rag_memory_bot.lock", label="telegram_rag_memory_bot")
     process_lock.acquire()
-    database = Database(settings.database_path)
+    database = Database(settings.database_path, settings.database_url)
     media_service = MediaService(settings)
     openai_service = OpenAIService(settings)
     rag_service = RagService(

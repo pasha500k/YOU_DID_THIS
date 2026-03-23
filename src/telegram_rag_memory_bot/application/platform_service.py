@@ -107,6 +107,50 @@ class PlatformAssistantService(AssistantApplicationService):
     def deactivate_site_account(self, username: str) -> bool:
         return self.rag_service.database.deactivate_site_account(username, platform=self.platform_code)
 
+    def create_site_support_message(
+        self,
+        *,
+        username: str,
+        site_user_id: int,
+        display_name: str,
+        sender_role: str,
+        message_text: str,
+    ) -> int:
+        return int(
+            self.rag_service.database.create_site_support_message(
+                username=username,
+                site_user_id=self.to_internal_user_id(site_user_id) if site_user_id else 0,
+                display_name=display_name,
+                sender_role=sender_role,
+                message_text=message_text,
+            )
+        )
+
+    def list_site_support_messages(self, username: str, *, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.rag_service.database.list_site_support_messages(username, limit=limit)
+        normalized_rows: list[dict[str, Any]] = []
+        for row in rows:
+            payload = dict(row)
+            site_user_id = int(payload.get("site_user_id") or 0)
+            if site_user_id:
+                payload["site_user_id"] = self.to_external_user_id(site_user_id)
+            normalized_rows.append(payload)
+        return normalized_rows
+
+    def list_site_support_threads(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.rag_service.database.list_site_support_threads(limit=limit)
+        normalized_rows: list[dict[str, Any]] = []
+        for row in rows:
+            payload = dict(row)
+            site_user_id = int(payload.get("site_user_id") or 0)
+            if site_user_id:
+                payload["site_user_id"] = self.to_external_user_id(site_user_id)
+            normalized_rows.append(payload)
+        return normalized_rows
+
+    def mark_site_support_read_by_admin(self, username: str) -> int:
+        return int(self.rag_service.database.mark_site_support_read_by_admin(username))
+
     def get_user_preferences(self, user_id: int) -> dict[str, Any]:
         return super().get_user_preferences(self.to_internal_user_id(user_id))
 

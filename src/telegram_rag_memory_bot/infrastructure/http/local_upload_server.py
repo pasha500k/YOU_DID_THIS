@@ -19,13 +19,14 @@ from uuid import uuid4
 from aiohttp import web
 
 from telegram_rag_memory_bot.application.platform_service import PlatformAssistantService
-from telegram_rag_memory_bot.config import Settings
+from telegram_rag_memory_bot.config import PROJECT_ROOT, Settings
 from telegram_rag_memory_bot.domain.models import LocalUploadRequest, SenderProfile
 from telegram_rag_memory_bot.domain.ports import NotificationGateway, StorageGateway
 from telegram_rag_memory_bot.utils.dates import format_display_date, parse_iso_date
 from telegram_rag_memory_bot.utils.security import hash_password
 
 LOGGER = logging.getLogger(__name__)
+FAVICON_PATH = PROJECT_ROOT / "mobile_app" / "assets" / "favicon.png"
 
 
 @dataclass(slots=True)
@@ -137,6 +138,8 @@ class LocalUploadServer:
         )
 
     async def _handle_favicon(self, request: web.Request) -> web.Response:
+        if FAVICON_PATH.exists():
+            return web.FileResponse(path=Path(FAVICON_PATH))
         return web.Response(status=204)
 
     async def _handle_root(self, request: web.Request) -> web.Response:

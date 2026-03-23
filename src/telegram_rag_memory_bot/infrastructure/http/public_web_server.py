@@ -12,19 +12,21 @@ from collections import deque
 from dataclasses import dataclass
 from html import escape
 import logging
+from pathlib import Path
 import secrets
 from typing import Any
 
 from aiohttp import web
 
 from telegram_rag_memory_bot.application.platform_service import PlatformAssistantService
-from telegram_rag_memory_bot.config import Settings
+from telegram_rag_memory_bot.config import PROJECT_ROOT, Settings
 from telegram_rag_memory_bot.domain.models import ChatSession, ManagedAnswerChoice, ManagedAnswerOption, SenderProfile
 from telegram_rag_memory_bot.domain.ports import NotificationGateway
 from telegram_rag_memory_bot.utils.dates import format_display_date_range
 from telegram_rag_memory_bot.utils.security import hash_password, verify_password
 
 LOGGER = logging.getLogger(__name__)
+FAVICON_PATH = PROJECT_ROOT / "mobile_app" / "assets" / "favicon.png"
 
 
 @dataclass(slots=True)
@@ -77,7 +79,9 @@ class PublicWebServer:
                 web.get("/health", self._handle_health),
                 web.get("/favicon.ico", self._handle_favicon),
                 web.get("/{platform}", self._handle_dashboard),
+                web.get("/{platform}/support", self._handle_support_page),
                 web.post("/{platform}/ask", self._handle_ask),
+                web.post("/{platform}/support/send", self._handle_support_send),
                 web.post("/{platform}/managed-answer", self._handle_managed_answer),
                 web.post("/{platform}/search", self._handle_search),
                 web.post("/{platform}/list", self._handle_list),
@@ -130,6 +134,8 @@ class PublicWebServer:
         )
 
     async def _handle_favicon(self, request: web.Request) -> web.Response:
+        if FAVICON_PATH.exists():
+            return web.FileResponse(path=Path(FAVICON_PATH))
         return web.Response(status=204)
 
     async def _handle_root(self, request: web.Request) -> web.StreamResponse:
@@ -189,6 +195,37 @@ class PublicWebServer:
     async def _handle_dashboard(self, request: web.Request) -> web.Response:
         context, session = self._require_session(request)
         return self._dashboard_response(context, session)
+
+    async def _handle_support_page(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        return self._support_response(context, session)
+
+    async def _handle_support_send(self, request: web.Request) -> web.StreamResponse:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        message_text = fields.get("message", "").strip()
+        if not session.username:
+            self._set_error(session, "Сессия сайта устарела. Войдите заново, чтобы написать в поддержку.")
+            raise web.HTTPFound("/")
+        if not message_text:
+            self._set_error(session, "Опишите проблему, вопрос или ошибку.")
+            raise web.HTTPFound(f"{context.base_path}/support")
+        context.app_service.create_site_support_message(
+            username=session.username,
+            site_user_id=session.user_id,
+            display_name=session.display_name,
+            sender_role="user",
+            message_text=message_text,
+        )
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="site_support_message",
+            sender_profile=self._sender_profile(session),
+            details={"surface": "web", "username": session.username, "message": message_text[:500]},
+        )
+        self._set_notice(session, "Сообщение отправлено администрации.")
+        raise web.HTTPFound(f"{context.base_path}/support")
 
     async def _handle_ask(self, request: web.Request) -> web.Response:
         context, session = self._require_session(request)
@@ -1488,8 +1525,11 @@ class PublicWebServer:
         if not verify_password(password, str(account.get("password_hash") or "")):
             return web.Response(text=self._render_landing(error_text="Неверный логин или пароль сайта."), content_type="text/html", status=403)
 
-        user_id = int(account.get("platform_user_id") or 0)
-        if user_id <= 0:
+        try:
+            user_id = int(account.get("platform_user_id") or 0)
+        except (TypeError, ValueError):
+            user_id = 0
+        if user_id == 0:
             return web.Response(
                 text=self._render_landing(error_text="Аккаунт сайта настроен некорректно. Обратитесь к команде проекта."),
                 content_type="text/html",

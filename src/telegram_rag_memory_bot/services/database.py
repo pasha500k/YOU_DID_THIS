@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -17,11 +18,150 @@ from telegram_rag_memory_bot.schemas import SearchHit
 from telegram_rag_memory_bot.utils.dates import format_russian_date_range, parse_iso_date
 
 
+class _PostgresCursorResult:
+    def __init__(self, rows: list[dict[str, Any]] | None = None, rowcount: int = 0, lastrowid: int | None = None) -> None:
+        self._rows = list(rows or [])
+        self.rowcount = rowcount
+        self.lastrowid = lastrowid
+
+    def fetchone(self) -> dict[str, Any] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return list(self._rows)
+
+
+class _PostgresConnectionAdapter:
+    SERIAL_ID_TABLES = {
+        "items",
+        "chunks",
+        "user_events",
+        "access_requests",
+        "promo_redemptions",
+        "managed_answer_options",
+        "pending_material_uploads",
+        "shifts",
+        "site_support_messages",
+    }
+
+    def __init__(self, database_url: str) -> None:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:  # pragma: no cover - depends on optional runtime package
+            raise RuntimeError(
+                "Для PostgreSQL нужен пакет psycopg. Установите зависимости проекта заново."
+            ) from exc
+        self._conn = psycopg.connect(database_url, row_factory=dict_row)
+
+    def execute(self, sql: str, params: tuple[Any, ...] | list[Any] | None = None) -> _PostgresCursorResult:
+        special = self._handle_special_sql(sql)
+        if special is not None:
+            return special
+        translated_sql, returning_id = self._translate_dml_sql(sql)
+        with self._conn.cursor() as cursor:
+            cursor.execute(translated_sql, tuple(params or ()))
+            rows = cursor.fetchall() if cursor.description is not None else []
+            lastrowid = None
+            if returning_id and rows:
+                first = rows[0]
+                if isinstance(first, dict) and first.get("id") is not None:
+                    lastrowid = int(first["id"])
+            return _PostgresCursorResult(rows=rows, rowcount=cursor.rowcount, lastrowid=lastrowid)
+
+    def executescript(self, sql_script: str) -> _PostgresCursorResult:
+        for statement in self._split_script(sql_script):
+            special = self._handle_special_sql(statement)
+            if special is not None:
+                continue
+            translated = self._translate_ddl_sql(statement)
+            if not translated.strip():
+                continue
+            with self._conn.cursor() as cursor:
+                cursor.execute(translated)
+        return _PostgresCursorResult()
+
+    def commit(self) -> None:
+        self._conn.commit()
+
+    def close(self) -> None:
+        self._conn.close()
+
+    def _handle_special_sql(self, sql: str) -> _PostgresCursorResult | None:
+        stripped = sql.strip().rstrip(";")
+        if not stripped:
+            return _PostgresCursorResult()
+        upper = stripped.upper()
+        if not upper.startswith("PRAGMA"):
+            return None
+        if upper.startswith("PRAGMA TABLE_INFO("):
+            match = re.search(r"PRAGMA\s+table_info\(([^)]+)\)", stripped, flags=re.IGNORECASE)
+            table_name = match.group(1).strip().strip('"').strip("'") if match else ""
+            if not table_name:
+                return _PostgresCursorResult()
+            with self._conn.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT column_name AS name
+                    FROM information_schema.columns
+                    WHERE table_schema = current_schema()
+                      AND table_name = %s
+                    ORDER BY ordinal_position
+                    """,
+                    (table_name,),
+                )
+                rows = cursor.fetchall()
+            return _PostgresCursorResult(rows=rows, rowcount=len(rows))
+        return _PostgresCursorResult()
+
+    @staticmethod
+    def _split_script(sql_script: str) -> list[str]:
+        return [chunk.strip() for chunk in sql_script.split(";") if chunk.strip()]
+
+    @staticmethod
+    def _translate_common_sql(sql: str) -> str:
+        translated = re.sub(r"\bCURRENT_TIMESTAMP\b", "CURRENT_TIMESTAMP::text", sql, flags=re.IGNORECASE)
+        return translated.replace("?", "%s")
+
+    def _translate_dml_sql(self, sql: str) -> tuple[str, bool]:
+        translated = self._translate_common_sql(sql)
+        stripped = translated.strip().rstrip(";")
+        if not stripped:
+            return translated, False
+        upper = stripped.upper()
+        if not upper.startswith("INSERT INTO") or "RETURNING" in upper:
+            return translated, False
+        match = re.match(r"INSERT\s+INTO\s+([a-zA-Z_][\w]*)", stripped, flags=re.IGNORECASE)
+        if not match:
+            return translated, False
+        table_name = match.group(1).lower()
+        if table_name not in self.SERIAL_ID_TABLES:
+            return translated, False
+        return f"{stripped} RETURNING id", True
+
+    def _translate_ddl_sql(self, sql: str) -> str:
+        translated = self._translate_common_sql(sql)
+        translated = re.sub(
+            r"INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT",
+            "BIGSERIAL PRIMARY KEY",
+            translated,
+            flags=re.IGNORECASE,
+        )
+        return translated
+
+
 class Database:
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path | None, database_url: str = "") -> None:
         self.database_path = database_path
-        self.connection = sqlite3.connect(self.database_path)
-        self.connection.row_factory = sqlite3.Row
+        self.database_url = database_url.strip()
+        self.using_postgres = bool(self.database_url)
+        if self.using_postgres:
+            self.connection = _PostgresConnectionAdapter(self.database_url)
+        else:
+            if database_path is None:
+                raise RuntimeError("Не задан путь к SQLite-базе данных.")
+            self.connection = sqlite3.connect(self.database_path)
+            self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA foreign_keys = ON;")
         self._initialize()
 
@@ -226,6 +366,17 @@ class Database:
                 UNIQUE(platform, platform_user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS site_support_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                site_user_id INTEGER NOT NULL DEFAULT 0,
+                display_name TEXT NOT NULL DEFAULT '',
+                sender_role TEXT NOT NULL,
+                message_text TEXT NOT NULL,
+                admin_seen INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_items_date ON items(content_date);
             CREATE INDEX IF NOT EXISTS idx_items_scope ON items(content_scope);
             CREATE INDEX IF NOT EXISTS idx_chunks_item_id ON chunks(item_id);
@@ -239,6 +390,8 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_pending_material_uploads_status ON pending_material_uploads(status, created_at, id);
             CREATE INDEX IF NOT EXISTS idx_shifts_dates ON shifts(date_from, date_to);
             CREATE INDEX IF NOT EXISTS idx_site_accounts_platform ON site_accounts(platform, is_active, username);
+            CREATE INDEX IF NOT EXISTS idx_site_support_messages_username ON site_support_messages(username, id);
+            CREATE INDEX IF NOT EXISTS idx_site_support_messages_admin_seen ON site_support_messages(admin_seen, sender_role, created_at DESC);
             """
         )
         self._migrate()
@@ -423,6 +576,137 @@ class Database:
             )
         self.connection.commit()
         return cursor.rowcount > 0
+
+    def create_site_support_message(
+        self,
+        *,
+        username: str,
+        site_user_id: int,
+        display_name: str,
+        sender_role: str,
+        message_text: str,
+    ) -> int:
+        normalized_username = username.strip().lower()
+        clean_role = sender_role.strip().lower()
+        clean_text = message_text.strip()
+        if not normalized_username:
+            raise ValueError("Username cannot be empty.")
+        if clean_role not in {"user", "admin"}:
+            raise ValueError("Unsupported sender role.")
+        if not clean_text:
+            raise ValueError("Message text cannot be empty.")
+        cursor = self.connection.execute(
+            """
+            INSERT INTO site_support_messages (
+                username,
+                site_user_id,
+                display_name,
+                sender_role,
+                message_text,
+                admin_seen
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                normalized_username,
+                int(site_user_id),
+                display_name.strip(),
+                clean_role,
+                clean_text,
+                1 if clean_role == "admin" else 0,
+            ),
+        )
+        self.connection.commit()
+        return int(cursor.lastrowid)
+
+    def list_site_support_messages(self, username: str, *, limit: int = 200) -> list[dict[str, Any]]:
+        normalized_username = username.strip().lower()
+        if not normalized_username:
+            return []
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM (
+                SELECT *
+                FROM site_support_messages
+                WHERE username = ?
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            ORDER BY id ASC
+            """,
+            (normalized_username, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_site_support_threads(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            """
+            SELECT
+                base.username,
+                COALESCE((
+                    SELECT sm.display_name
+                    FROM site_support_messages sm
+                    WHERE sm.username = base.username
+                      AND TRIM(COALESCE(sm.display_name, '')) <> ''
+                    ORDER BY sm.id DESC
+                    LIMIT 1
+                ), '') AS display_name,
+                COALESCE((
+                    SELECT sm.site_user_id
+                    FROM site_support_messages sm
+                    WHERE sm.username = base.username
+                      AND sm.site_user_id != 0
+                    ORDER BY sm.id DESC
+                    LIMIT 1
+                ), 0) AS site_user_id,
+                (
+                    SELECT sm.sender_role
+                    FROM site_support_messages sm
+                    WHERE sm.username = base.username
+                    ORDER BY sm.id DESC
+                    LIMIT 1
+                ) AS last_sender_role,
+                (
+                    SELECT sm.message_text
+                    FROM site_support_messages sm
+                    WHERE sm.username = base.username
+                    ORDER BY sm.id DESC
+                    LIMIT 1
+                ) AS last_message_text,
+                (
+                    SELECT sm.created_at
+                    FROM site_support_messages sm
+                    WHERE sm.username = base.username
+                    ORDER BY sm.id DESC
+                    LIMIT 1
+                ) AS last_message_at,
+                SUM(CASE WHEN base.sender_role = 'user' AND base.admin_seen = 0 THEN 1 ELSE 0 END) AS unread_count,
+                COUNT(*) AS message_count
+            FROM site_support_messages base
+            GROUP BY base.username
+            ORDER BY MAX(base.id) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_site_support_read_by_admin(self, username: str) -> int:
+        normalized_username = username.strip().lower()
+        if not normalized_username:
+            return 0
+        cursor = self.connection.execute(
+            """
+            UPDATE site_support_messages
+            SET admin_seen = 1
+            WHERE username = ?
+              AND sender_role = 'user'
+              AND admin_seen = 0
+            """,
+            (normalized_username,),
+        )
+        self.connection.commit()
+        return int(cursor.rowcount or 0)
 
     def upsert_item(self, payload: dict[str, Any]) -> int:
         existing = self.connection.execute(

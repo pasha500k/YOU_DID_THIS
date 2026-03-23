@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from openai import OpenAI
 
@@ -17,6 +19,8 @@ from telegram_rag_memory_bot.config import Settings
 from telegram_rag_memory_bot.schemas import FileAnalysis, SearchHit
 from telegram_rag_memory_bot.utils.dates import format_display_date
 from telegram_rag_memory_bot.utils.text import trim_text
+
+LOGGER = logging.getLogger(__name__)
 
 
 class OpenAIService:
@@ -260,8 +264,11 @@ class OpenAIService:
             "Answer in Russian, briefly and clearly.",
             "Use recent chat history only to resolve references and follow-up questions.",
             "Prioritize the memory context for facts about stored materials, dates, shifts, events, and media contents.",
+            "If needed, you may use web search for current information, public facts, or missing context.",
+            "Web search is a fallback and helper, not the primary source when memory already contains the needed project facts.",
             "Do not limit yourself only to the memory context.",
             "If memory is partial or empty, still give the best helpful answer using general knowledge, reasoning, and the current dialogue context.",
+            "If you used internet sources, clearly separate them from memory-backed facts and do not invent URLs or citations.",
             "If a part of the answer is not directly confirmed by memory, briefly mark it as an inference, assumption, or general explanation.",
             "If memory and general knowledge conflict, prioritize memory for project-specific facts and explicitly mention the mismatch.",
             "Mention exact dates in DD-MM-YYYY format whenever relevant.",
@@ -275,9 +282,9 @@ class OpenAIService:
             system_parts.append(custom_prompt.strip())
 
         client = self._get_client(api_key)
-        response = client.responses.create(
-            model=model or self.settings.answer_model,
-            input=[
+        request_kwargs: dict[str, object] = {
+            "model": model or self.settings.answer_model,
+            "input": [
                 {
                     "role": "system",
                     "content": [
@@ -301,9 +308,23 @@ class OpenAIService:
                     ],
                 },
             ],
-            max_output_tokens=800,
+            "max_output_tokens": 800,
+        }
+        use_web_search = self.settings.openai_web_search_enabled
+        if use_web_search:
+            request_kwargs["include"] = ["web_search_call.action.sources"]
+            request_kwargs["tools"] = [self._build_web_search_tool()]
+            request_kwargs["max_tool_calls"] = self.settings.openai_web_search_max_tool_calls
+
+        response = self._create_answer_response(
+            client=client,
+            request_kwargs=request_kwargs,
+            use_web_search=use_web_search,
         )
-        return response.output_text.strip()
+        answer_text = response.output_text.strip()
+        if use_web_search:
+            answer_text = self._append_web_sources(answer_text, self._extract_web_source_urls(response))
+        return answer_text
 
     def _structured_analysis(self, *, model: str, system_prompt: str, content: list[dict[str, str]]) -> FileAnalysis:
         response = self._default_client.responses.create(
@@ -390,6 +411,68 @@ class OpenAIService:
         for pattern, replacement in replacements:
             normalized = re.sub(pattern, replacement, normalized)
         return normalized
+
+    def _build_web_search_tool(self) -> dict[str, object]:
+        return {
+            "type": "web_search",
+            "search_context_size": self.settings.openai_web_search_context_size,
+        }
+
+    def _create_answer_response(
+        self,
+        *,
+        client: OpenAI,
+        request_kwargs: dict[str, object],
+        use_web_search: bool,
+    ):
+        try:
+            return client.responses.create(**request_kwargs)
+        except Exception as exc:
+            if not use_web_search:
+                raise
+            LOGGER.warning(
+                "Web search answer fallback triggered; retrying without internet tool: %s",
+                exc,
+            )
+            fallback_kwargs = dict(request_kwargs)
+            fallback_kwargs.pop("include", None)
+            fallback_kwargs.pop("tools", None)
+            fallback_kwargs.pop("max_tool_calls", None)
+            return client.responses.create(**fallback_kwargs)
+
+    @staticmethod
+    def _extract_web_source_urls(response: object) -> list[str]:
+        urls: list[str] = []
+        for item in getattr(response, "output", []) or []:
+            if getattr(item, "type", "") != "web_search_call":
+                continue
+            action = getattr(item, "action", None)
+            action_type = getattr(action, "type", "")
+            if action_type == "search":
+                for source in getattr(action, "sources", []) or []:
+                    url = str(getattr(source, "url", "") or "").strip()
+                    if url and url not in urls:
+                        urls.append(url)
+            elif action_type == "open_page":
+                url = str(getattr(action, "url", "") or "").strip()
+                if url and url not in urls:
+                    urls.append(url)
+        return urls
+
+    @classmethod
+    def _append_web_sources(cls, answer_text: str, urls: list[str]) -> str:
+        clean_text = answer_text.strip()
+        if not urls or "Интернет:" in clean_text:
+            return clean_text
+        rendered = ", ".join(cls._format_web_source(url) for url in urls[:3])
+        return f"{clean_text}\nИнтернет: {rendered}"
+
+    @staticmethod
+    def _format_web_source(url: str) -> str:
+        parsed = urlparse(url)
+        if not parsed.netloc:
+            return url
+        return url
 
     def _get_client(self, api_key: str | None = None) -> OpenAI:
         if not api_key or api_key == self.settings.openai_api_key:
