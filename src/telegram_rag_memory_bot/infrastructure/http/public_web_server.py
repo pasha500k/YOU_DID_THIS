@@ -225,6 +225,226 @@ class PublicWebServer:
         return self._support_response(context, session)
 
 
+def _chatgpt_like_render_landing(self: PublicWebServer, *, error_text: str) -> str:
+    error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+    return (
+        f"{self._head_html('Letovo Assistant')}"
+        '<body class="site chatgpt-like auth-body">'
+        '<main class="auth-shell">'
+        '<section class="auth-panel auth-panel-brand">'
+        '<span class="auth-badge">Letovo Assistant</span>'
+        '<h1>Единое рабочее пространство</h1>'
+        '<p class="auth-lead">Сайт с общей RAG-памятью, чатом, поиском по материалам, настройками AI и отдельным каналом поддержки.</p>'
+        '<div class="auth-feature-list">'
+        '<div class="auth-feature"><strong>Чат и поиск</strong><span>Задавайте вопросы в свободной форме и быстро находите материалы по базе.</span></div>'
+        '<div class="auth-feature"><strong>Гибкие настройки</strong><span>API token, prompt, департамент и персональный профиль вынесены в отдельные разделы.</span></div>'
+        '<div class="auth-feature"><strong>Поддержка</strong><span>Если что-то сломалось, можно сразу написать администрации внутри сайта.</span></div>'
+        '</div>'
+        f'<p class="auth-note">Публичный адрес: <code>{escape(self.settings.public_web_base_url)}</code></p>'
+        '</section>'
+        '<section class="auth-panel auth-panel-actions">'
+        '<div class="auth-card">'
+        '<span class="eyebrow">Старт</span>'
+        '<h2>Вход и регистрация</h2>'
+        '<p class="muted">Выберите нужное действие. Аккаунты сайта живут отдельно от аккаунтов в ботах.</p>'
+        f"{error_html}"
+        '<div class="auth-actions">'
+        '<a class="primary-link" href="/login">Войти</a>'
+        '<a class="ghost-link wide-link" href="/register">Создать аккаунт</a>'
+        '</div>'
+        '</div>'
+        '</section>'
+        '</main>'
+        '</body></html>'
+    )
+
+
+def _chatgpt_like_render_login_page(self: PublicWebServer, *, error_text: str, username: str = "") -> str:
+    error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+    return (
+        f"{self._head_html('Вход в Letovo Assistant')}"
+        '<body class="site chatgpt-like auth-body">'
+        '<main class="auth-shell narrow-shell">'
+        '<section class="auth-panel auth-panel-actions">'
+        '<div class="auth-card">'
+        '<span class="eyebrow">Вход</span>'
+        '<h1>Сайт-аккаунт</h1>'
+        '<p class="muted">Введите логин и пароль сайта, чтобы открыть чат, настройки, поддержку и историю работы.</p>'
+        f"{error_html}"
+        '<form method="post" action="/login" class="auth-stack">'
+        f'<label>Логин<input name="username" value="{escape(username)}" autocomplete="username" placeholder="Например user_web" required></label>'
+        '<label>Пароль<input type="password" name="password" autocomplete="current-password" placeholder="Введите пароль" required></label>'
+        '<button type="submit">Войти</button>'
+        '</form>'
+        '<div class="auth-footer-links">'
+        '<a class="ghost-link" href="/">На главную</a>'
+        '<a class="ghost-link" href="/register">Регистрация</a>'
+        '</div>'
+        '</div>'
+        '</section>'
+        '</main>'
+        '</body></html>'
+    )
+
+
+def _chatgpt_like_render_register_page(
+    self: PublicWebServer,
+    *,
+    error_text: str,
+    username: str = "",
+    display_name: str = "",
+) -> str:
+    error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+    return (
+        f"{self._head_html('Регистрация в Letovo Assistant')}"
+        '<body class="site chatgpt-like auth-body">'
+        '<main class="auth-shell narrow-shell">'
+        '<section class="auth-panel auth-panel-actions">'
+        '<div class="auth-card">'
+        '<span class="eyebrow">Регистрация</span>'
+        '<h1>Создать сайт-аккаунт</h1>'
+        '<p class="muted">После регистрации откроется отдельное рабочее пространство сайта с общей памятью материалов и персональными настройками.</p>'
+        f"{error_html}"
+        '<form method="post" action="/register" class="auth-stack" id="register-form-page">'
+        f'<label>Имя на сайте<input name="display_name" value="{escape(display_name)}" placeholder="Как к вам обращаться"></label>'
+        f'<label>Логин<input name="username" value="{escape(username)}" autocomplete="username" placeholder="Например user_web" required></label>'
+        '<label>Пароль<input type="password" name="password" id="register-page-password" autocomplete="new-password" required></label>'
+        '<label>Повтор пароля<input type="password" name="password_repeat" id="register-page-password-repeat" autocomplete="new-password" required></label>'
+        '<div class="banner err" id="register-page-password-error" style="display:none"></div>'
+        '<button type="submit">Создать аккаунт</button>'
+        '</form>'
+        '<div class="auth-footer-links">'
+        '<a class="ghost-link" href="/">На главную</a>'
+        '<a class="ghost-link" href="/login">У меня уже есть аккаунт</a>'
+        '</div>'
+        '</div>'
+        '</section>'
+        '<script>'
+        "(() => {"
+        "const form = document.getElementById('register-form-page');"
+        "const password = document.getElementById('register-page-password');"
+        "const repeat = document.getElementById('register-page-password-repeat');"
+        "const errorBox = document.getElementById('register-page-password-error');"
+        "if (!form || !password || !repeat || !errorBox) return;"
+        "const clearState = () => { if (password.value === repeat.value) { errorBox.style.display = 'none'; errorBox.textContent = ''; } };"
+        "password.addEventListener('input', clearState);"
+        "repeat.addEventListener('input', clearState);"
+        "form.addEventListener('submit', (event) => {"
+        "if (password.value !== repeat.value) {"
+        "event.preventDefault();"
+        "errorBox.textContent = 'Пароли не совпадают. Регистрация не выполнена.';"
+        "errorBox.style.display = 'block';"
+        "repeat.focus();"
+        "}"
+        "});"
+        "})();"
+        '</script>'
+        '</body></html>'
+    )
+
+
+def _chatgpt_like_render_authenticated_shell(
+    self: PublicWebServer,
+    *,
+    title: str,
+    context: PublicPlatformContext,
+    session: PublicSiteSession,
+    active: str,
+    lead: str,
+    body_html: str,
+) -> str:
+    prefs = context.app_service.get_user_preferences(session.user_id)
+    department = context.app_service.get_user_department(session.user_id) or "не выбран"
+    prompt_profile = context.app_service.get_prompt_profile(prefs)
+    prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+    has_api = bool(context.app_service.get_active_api_key(prefs))
+    notice_html = f'<div class="banner ok">{escape(session.notice_text)}</div>' if session.notice_text else ""
+    error_html = f'<div class="banner err">{escape(session.error_text)}</div>' if session.error_text else ""
+    nav_items = [
+        ("dashboard", "/app", "Чат"),
+        ("settings", "/settings", "Настройки"),
+        ("settings-api", "/settings/api", "AI и API"),
+        ("support", "/support", "Поддержка"),
+    ]
+    nav_html = "".join(
+        f'<a class="side-link{" active" if key == active else ""}" href="{href}">{label}</a>'
+        for key, href, label in nav_items
+    )
+    account_note = f"@{session.username}" if session.username else f"ID {session.user_id}"
+    return (
+        f"{self._head_html(title)}"
+        '<body class="site chatgpt-like">'
+        '<main class="cg-shell">'
+        '<aside class="cg-sidebar">'
+        '<div class="cg-brand"><span class="cg-brand-mark">L</span><div><strong>Letovo Assistant</strong><span>Рабочее пространство</span></div></div>'
+        '<nav class="cg-nav">'
+        f"{nav_html}"
+        '</nav>'
+        '<section class="cg-account">'
+        f'<strong>{escape(session.display_name)}</strong>'
+        f'<span>{escape(account_note)}</span>'
+        f'<span>Департамент: {escape(department)}</span>'
+        f'<span>Профиль: {escape(prompt_profile_label)}</span>'
+        f'<span>API: {"подключен" if has_api else "не подключен"}</span>'
+        '</section>'
+        '<div class="cg-sidebar-actions">'
+        '<a class="ghost-link wide-link" href="/">Сменить аккаунт</a>'
+        '<form method="post" action="/logout" class="inline-form"><button type="submit" class="ghost wide-button">Выйти</button></form>'
+        '</div>'
+        '</aside>'
+        '<section class="cg-main">'
+        '<header class="cg-topbar">'
+        f'<div><h1>{escape(title)}</h1><p>{escape(lead)}</p></div>'
+        '</header>'
+        f"{notice_html}{error_html}"
+        f'<section class="cg-body">{body_html}</section>'
+        '</section>'
+        '</main>'
+        '</body></html>'
+    )
+
+
+def _chatgpt_like_styles() -> str:
+    return (
+        ":root{--bg:#f7f7f8;--panel:#ffffff;--panel-soft:#fbfbfc;--sidebar:#171717;--sidebar-soft:#202123;--text:#0f172a;--muted:#667085;--border:#e5e7eb;--border-strong:#d1d5db;--accent:#10a37f;--accent-hover:#0d8f6f;--danger:#b42318;--ok:#027a48;--shadow:0 1px 2px rgba(16,24,40,.06),0 12px 32px rgba(16,24,40,.06);--radius:18px;--radius-lg:24px}"
+        "*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:15px/1.55 Inter,Segoe UI,system-ui,-apple-system,BlinkMacSystemFont,sans-serif}"
+        "a{text-decoration:none;color:inherit}form{margin:0}button,input,select,textarea{font:inherit}"
+        ".site code{background:#eef2f6;padding:2px 6px;border-radius:8px}"
+        ".page{max-width:1320px;margin:0 auto;padding:24px}.hero,.workspace,.grid-layout,.entry-grid{display:grid;gap:20px}.hero{grid-template-columns:minmax(0,1.2fr) minmax(320px,.8fr)}"
+        ".hero-copy,.hero-side,.entry,.card,.auth-panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow);padding:28px}"
+        ".entry-grid{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}.entry{min-height:200px;background:linear-gradient(180deg,#fff 0%,#fafafa 100%)}"
+        ".eyebrow,.auth-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:#eef8f5;color:#0f766e;font-size:.78rem;font-weight:700;letter-spacing:.02em;text-transform:none}"
+        "h1,h2,h3{margin:0 0 12px;line-height:1.1;font-weight:700}h1{font-size:clamp(2rem,3vw,3.2rem)}h2{font-size:clamp(1.15rem,1.8vw,1.75rem)}p{margin:0 0 10px}.lead,.auth-lead{font-size:1.05rem;color:#111827;max-width:60ch}.muted,.auth-note{color:var(--muted)}"
+        ".banner{padding:14px 16px;border-radius:14px;border:1px solid var(--border);margin:0 0 16px}.banner.ok{background:#ecfdf3;border-color:#abefc6;color:var(--ok)}.banner.err{background:#fef3f2;border-color:#fecdca;color:var(--danger)}"
+        "label{display:grid;gap:8px;font-weight:600;color:#344054}input,select,textarea{width:100%;padding:13px 14px;border-radius:14px;border:1px solid var(--border-strong);background:#fff;color:var(--text);outline:none;transition:border-color .16s ease,box-shadow .16s ease}textarea{resize:vertical;min-height:110px}input:focus,select:focus,textarea:focus{border-color:#98a2b3;box-shadow:0 0 0 4px rgba(16,24,40,.04)}"
+        "button,.primary-link{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 16px;border:0;border-radius:14px;background:var(--accent);color:#fff;font-weight:600;cursor:pointer;transition:background .16s ease,transform .16s ease}.primary-link:hover,button:hover{background:var(--accent-hover);transform:translateY(-1px)}button.ghost,.ghost-link{display:inline-flex;align-items:center;justify-content:center;padding:12px 16px;border-radius:14px;border:1px solid var(--border);background:#fff;color:#111827;font-weight:600}.wide-link,.wide-button{width:100%}"
+        ".toolbar,.auth-actions,.auth-footer-links{display:flex;flex-wrap:wrap;gap:12px;align-items:center}.auth-footer-links{justify-content:center}.inline-form{display:inline-flex}"
+        ".auth-body{display:grid;place-items:center;padding:24px}.auth-shell{width:min(1120px,100%);display:grid;grid-template-columns:minmax(0,1.15fr) minmax(340px,.85fr);gap:20px}.narrow-shell{width:min(520px,100%);grid-template-columns:1fr}.auth-panel-brand{background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%)}.auth-feature-list{display:grid;gap:12px;margin-top:18px}.auth-feature{padding:16px;border-radius:16px;background:var(--panel-soft);border:1px solid var(--border)}.auth-feature strong{display:block;margin-bottom:4px}.auth-panel-actions{display:flex;align-items:center;justify-content:center}.auth-card{width:100%;display:grid;gap:16px}.auth-stack{display:grid;gap:14px}"
+        ".cg-shell{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh}.cg-sidebar{background:var(--sidebar);color:#f5f5f5;padding:20px 16px;display:grid;grid-template-rows:auto auto 1fr auto;gap:18px;position:sticky;top:0;height:100vh}.cg-brand{display:flex;gap:12px;align-items:center;padding:10px 12px;border-radius:16px;background:rgba(255,255,255,.04)}.cg-brand strong{display:block;font-size:1rem}.cg-brand span{display:block;font-size:.86rem;color:#a1a1aa}.cg-brand-mark{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--accent);color:#fff;font-weight:800}"
+        ".cg-nav{display:grid;gap:8px}.side-link{display:flex;align-items:center;padding:11px 12px;border-radius:12px;color:#e5e7eb;transition:background .16s ease,color .16s ease}.side-link:hover{background:rgba(255,255,255,.06)}.side-link.active{background:#2b2c2f;color:#fff}"
+        ".cg-account{display:grid;gap:6px;padding:14px;border-radius:16px;background:rgba(255,255,255,.04);font-size:.92rem;color:#d4d4d8}.cg-account strong{color:#fff}.cg-sidebar-actions{display:grid;gap:10px}"
+        ".cg-main{display:grid;grid-template-rows:auto 1fr;min-width:0}.cg-topbar{padding:22px 28px 10px;border-bottom:1px solid var(--border);background:rgba(247,247,248,.92);backdrop-filter:blur(10px);position:sticky;top:0;z-index:5}.cg-topbar h1{font-size:1.45rem;margin-bottom:6px}.cg-topbar p{color:var(--muted);margin:0;max-width:72ch}.cg-body{padding:24px 28px 40px}"
+        ".card,.auth-card,.entry{display:flex;flex-direction:column;gap:14px}.side-panel{gap:14px}.grid-layout{grid-template-columns:repeat(2,minmax(0,1fr))}.stack,.settings-grid,.grid.one,.settings-grid-web{display:grid;gap:12px}"
+        ".workspace{grid-template-columns:minmax(300px,360px) minmax(0,1fr);align-items:start}.sidebar-column,.chat-column{display:grid;gap:16px}.sticky-panel{position:sticky;top:94px}"
+        ".tool-panel{border:1px solid var(--border);border-radius:16px;background:var(--panel-soft);padding:12px 14px}.tool-panel+ .tool-panel{margin-top:10px}.tool-panel summary{cursor:pointer;font-weight:700;list-style:none}.tool-panel summary::-webkit-details-marker{display:none}.tool-panel[open] summary{margin-bottom:12px}"
+        ".mini-list{display:grid;gap:10px}.mini-item{padding:14px 15px;border:1px solid var(--border);border-radius:14px;background:#fff}.mini-item strong{display:block;margin-bottom:4px}.mini-item span{display:block;color:var(--muted);font-size:.92rem}.mini-item p{margin-top:8px;color:var(--text)}"
+        ".command-grid,.choice-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}.pre{margin:0;white-space:pre-wrap;word-break:break-word;padding:16px;border-radius:16px;background:#fff;border:1px solid var(--border)}.compact-pre{max-height:260px;overflow:auto}"
+        ".chat-shell{background:#ffffff;border:1px solid var(--border);border-radius:24px;box-shadow:var(--shadow);padding:0;overflow:hidden;min-height:76vh;display:grid;grid-template-rows:auto auto auto minmax(280px,1fr)}.chat-shell-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;padding:20px 22px;border-bottom:1px solid var(--border);background:#ffffff}.chat-metrics{display:grid;grid-template-columns:repeat(2,minmax(90px,1fr));gap:10px;min-width:220px}.metric{display:grid;gap:4px;padding:10px 12px;border-radius:14px;border:1px solid var(--border);background:var(--panel-soft);text-align:center}.metric strong{font-size:1.1rem}.metric small{color:var(--muted)}"
+        ".chat-composer{display:grid;gap:12px;padding:18px 22px;border-bottom:1px solid var(--border);background:#ffffff}.chat-composer textarea{min-height:96px;border-radius:18px;background:var(--panel-soft)}.composer-actions{display:flex;justify-content:flex-end}.managed-choice{margin:18px 22px 0}.managed-choice .choice-grid{padding-top:4px}"
+        ".chat-log{display:grid;gap:18px;align-content:start;overflow:auto;padding:24px 22px 28px;background:#ffffff}.chat-row{display:flex}.chat-row.user{justify-content:flex-end}.chat-row.assistant{justify-content:flex-start}.chat-bubble{max-width:min(100%,820px);padding:0;border-radius:0;border:0;background:transparent;box-shadow:none}.chat-row.user .chat-bubble{max-width:min(100%,760px)}.chat-row.user .chat-bubble p{background:#f3f4f6;border:1px solid var(--border);border-radius:18px;padding:14px 16px}.chat-row.assistant .chat-bubble p{padding:0 0 2px}.chat-meta{display:flex;gap:12px;align-items:center;justify-content:space-between;font-size:.78rem;color:var(--muted);text-transform:none;font-weight:600;margin-bottom:8px}.chat-title{font-size:1rem;font-weight:700;margin-bottom:8px}.chat-bubble p{margin:0;white-space:pre-wrap;word-break:break-word;line-height:1.65}"
+        ".result-card{background:#fff}.history-list{display:grid;gap:10px}.history-item{padding:14px;border-radius:14px;background:#fff;border:1px solid var(--border)}.history-item strong{display:block;margin-bottom:6px}.history-item p{white-space:pre-wrap}"
+        "@media (max-width:1180px){.cg-shell{grid-template-columns:1fr}.cg-sidebar{position:static;height:auto;grid-template-rows:auto auto auto auto}.workspace,.grid-layout,.auth-shell,.hero{grid-template-columns:1fr}.sticky-panel{position:static}}"
+        "@media (max-width:760px){.page,.cg-body{padding:16px}.cg-topbar{padding:18px 16px 10px}.chat-shell-head{padding:16px;grid-template-columns:1fr}.chat-metrics{grid-template-columns:1fr 1fr;min-width:0}.chat-composer,.chat-log{padding-left:16px;padding-right:16px}.toolbar,.auth-actions,.auth-footer-links{flex-direction:column;align-items:stretch}.ghost-link,.primary-link,button,.inline-form{width:100%}.chat-shell{min-height:auto}}"
+    )
+
+
+PublicWebServer._render_landing = _chatgpt_like_render_landing
+PublicWebServer._render_login_page = _chatgpt_like_render_login_page
+PublicWebServer._render_register_page = _chatgpt_like_render_register_page
+PublicWebServer._render_authenticated_shell = _chatgpt_like_render_authenticated_shell
+PublicWebServer._styles = staticmethod(_chatgpt_like_styles)
+
+
 def _public_web_open_public_session(
     self: PublicWebServer,
     *,

@@ -69,6 +69,18 @@ class _PostgresConnectionAdapter:
                     lastrowid = int(first["id"])
             return _PostgresCursorResult(rows=rows, rowcount=cursor.rowcount, lastrowid=lastrowid)
 
+    def executemany(self, sql: str, params_seq: list[tuple[Any, ...]] | list[list[Any]]) -> _PostgresCursorResult:
+        special = self._handle_special_sql(sql)
+        if special is not None:
+            return special
+        translated_sql, _returning_id = self._translate_dml_sql(sql)
+        normalized_params = [tuple(params) for params in params_seq]
+        if not normalized_params:
+            return _PostgresCursorResult(rowcount=0)
+        with self._conn.cursor() as cursor:
+            cursor.executemany(translated_sql, normalized_params)
+            return _PostgresCursorResult(rowcount=cursor.rowcount)
+
     def executescript(self, sql_script: str) -> _PostgresCursorResult:
         for statement in self._split_script(sql_script):
             special = self._handle_special_sql(statement)
