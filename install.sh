@@ -398,45 +398,73 @@ configure_postgres() {
   systemctl enable postgresql >/dev/null 2>&1 || true
   systemctl restart postgresql
 
-  runuser -u postgres -- psql -v ON_ERROR_STOP=1 \
-    --set=db_user="$db_user" \
-    --set=db_password="$db_password" \
-    --set=db_name="$db_name" <<'SQL'
-DO $do$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'db_user') THEN
-    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L', :'db_user', :'db_password');
-  ELSE
-    EXECUTE format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'db_user', :'db_password');
-  END IF;
-END
-$do$;
-SELECT format('CREATE DATABASE %I OWNER %I', :'db_name', :'db_user')
-WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'db_name') \gexec
-SQL
+  runuser -u postgres -- \
+    "$APP_DIR/.venv/bin/python" - "$db_user" "$db_password" "$db_name" <<'PY'
+import sys
+
+import psycopg
+from psycopg import sql
+
+db_user, db_password, db_name = sys.argv[1:4]
+
+with psycopg.connect("dbname=postgres user=postgres") as conn:
+    conn.autocommit = True
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (db_user,))
+        if cur.fetchone():
+            cur.execute(
+                sql.SQL("ALTER ROLE {} WITH LOGIN PASSWORD {}").format(
+                    sql.Identifier(db_user),
+                    sql.Literal(db_password),
+                )
+            )
+        else:
+            cur.execute(
+                sql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(
+                    sql.Identifier(db_user),
+                    sql.Literal(db_password),
+                )
+            )
+
+        cur.execute(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s AND pid <> pg_backend_pid()",
+            (db_name,),
+        )
+        cur.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(db_name)))
+        cur.execute(
+            sql.SQL("CREATE DATABASE {} OWNER {}").format(
+                sql.Identifier(db_name),
+                sql.Identifier(db_user),
+            )
+        )
+PY
 }
 
-migrate_sqlite_to_postgres() {
+initialize_database_schema() {
   local env_file="$APP_DIR/.env"
-  local sqlite_path database_url
-  sqlite_path="$(get_env_value "$env_file" "DATABASE_PATH")"
+  local database_url
   database_url="$(get_env_value "$env_file" "DATABASE_URL")"
 
-  if [[ -z "$sqlite_path" || ! -f "$sqlite_path" ]]; then
-    log "SQLite база для переноса не найдена, шаг миграции пропускаю"
-    return 0
-  fi
   if [[ -z "$database_url" ]]; then
-    log "DATABASE_URL пустой, шаг миграции пропускаю"
-    return 0
+    fail "DATABASE_URL пустой: не могу создать PostgreSQL-схему"
   fi
 
-  log "Пробую перенести текущую SQLite базу в PostgreSQL"
+  log "Создаю новую PostgreSQL-базу без переноса SQLite"
   runuser -u "$APP_USER" -- \
-    "$APP_DIR/.venv/bin/python" \
-    "$APP_DIR/scripts/migrate_sqlite_to_postgres.py" \
-    --sqlite-path "$sqlite_path" \
-    --database-url "$database_url"
+    "$APP_DIR/.venv/bin/python" - "$database_url" <<'PY'
+import sys
+from pathlib import Path
+
+repo_root = Path.cwd()
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+
+from telegram_rag_memory_bot.services.database import Database
+
+database_url = sys.argv[1]
+db = Database(None, database_url)
+db.close()
+PY
 }
 
 write_systemd_service() {
@@ -516,7 +544,7 @@ main() {
   prepare_env_file
   interactive_env_wizard
   configure_postgres
-  migrate_sqlite_to_postgres
+  initialize_database_schema
   write_systemd_service
   configure_firewall
   print_summary

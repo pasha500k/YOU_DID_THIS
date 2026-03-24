@@ -73,11 +73,35 @@ class PublicWebServer:
         self.web_app.add_routes(
             [
                 web.get("/", self._handle_root),
+                web.get("/login", self._handle_login_page),
+                web.get("/register", self._handle_register_page),
                 web.post("/login", self._handle_login),
                 web.post("/register", self._handle_register),
                 web.post("/logout", self._handle_logout),
                 web.get("/health", self._handle_health),
                 web.get("/favicon.ico", self._handle_favicon),
+                web.get("/app", self._handle_dashboard),
+                web.get("/settings", self._handle_settings_page),
+                web.get("/settings/api", self._handle_api_settings_page),
+                web.get("/support", self._handle_support_page),
+                web.post("/ask", self._handle_ask),
+                web.post("/support/send", self._handle_support_send),
+                web.post("/managed-answer", self._handle_managed_answer),
+                web.post("/search", self._handle_search),
+                web.post("/list", self._handle_list),
+                web.post("/file", self._handle_file),
+                web.post("/promo", self._handle_promo),
+                web.post("/command/run", self._handle_custom_command),
+                web.post("/department/save", self._handle_department_save),
+                web.post("/department/action", self._handle_department_action),
+                web.post("/settings/account/save", self._handle_account_save),
+                web.post("/settings/password/save", self._handle_password_save),
+                web.post("/settings/api/save", self._handle_api_save),
+                web.post("/settings/api/delete", self._handle_api_delete),
+                web.post("/settings/prompt/save", self._handle_prompt_save),
+                web.post("/settings/prompt/delete", self._handle_prompt_delete),
+                web.post("/settings/profile/save", self._handle_prompt_profile_save),
+                web.post("/requests/create", self._handle_access_request),
                 web.get("/{platform}", self._handle_dashboard),
                 web.get("/{platform}/support", self._handle_support_page),
                 web.post("/{platform}/ask", self._handle_ask),
@@ -199,6 +223,2547 @@ class PublicWebServer:
     async def _handle_support_page(self, request: web.Request) -> web.Response:
         context, session = self._require_session(request)
         return self._support_response(context, session)
+
+
+def _public_web_open_public_session(
+    self: PublicWebServer,
+    *,
+    context: PublicPlatformContext,
+    user_id: int,
+    display_name: str,
+    username: str,
+    notice_text: str,
+) -> web.StreamResponse:
+    session_id = secrets.token_urlsafe(32)
+    self._sessions[session_id] = PublicSiteSession(
+        session_id=session_id,
+        platform_slug=context.slug,
+        user_id=user_id,
+        display_name=display_name,
+        chat_session=ChatSession(recent_messages=deque(maxlen=max(self.settings.conversation_context_messages * 2, 12))),
+        username=username,
+        notice_text=notice_text,
+    )
+    response = web.HTTPFound("/app")
+    response.set_cookie(
+        self.SESSION_COOKIE_NAME,
+        session_id,
+        httponly=True,
+        samesite="Lax",
+        path="/",
+        secure=self._cookie_secure(),
+    )
+    raise response
+
+
+def _public_web_render_landing(self: PublicWebServer, *, error_text: str) -> str:
+    error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+    feature_cards = (
+        '<section class="entry telegram"><span class="pill">Чат</span><h2>Рабочее пространство</h2><p>Один интерфейс для диалога с AI, поиска по материалам, истории ответов и быстрых действий по базе знаний.</p><p class="muted">Сайт адаптирован под телефон и компьютер без отдельной мобильной версии интерфейса.</p></section>'
+        '<section class="entry vk"><span class="pill">Настройки</span><h2>Глубокая кастомизация</h2><p>Отдельные страницы для профиля, API token, prompt-профиля, пользовательского prompt и рабочих параметров.</p><p class="muted">Сайт использует свои логины и пароли, а общими с ботами остаются только материалы и RAG-память.</p></section>'
+        '<section class="entry telegram"><span class="pill">Поддержка</span><h2>Связь с командой</h2><p>Если на сайте возникла ошибка или нужен доступ, можно сразу написать в отдельный чат поддержки внутри интерфейса.</p><p class="muted">Переписка видна администрации в отдельной панели и хранится в общей базе сайта.</p></section>'
+    )
+    return (
+        f"{self._head_html('Letovo Assistant')}"
+        '<body class="site home"><main class="page">'
+        '<section class="hero">'
+        '<div class="hero-copy">'
+        '<span class="eyebrow">Веб-платформа</span>'
+        '<h1>Letovo Assistant</h1>'
+        '<p class="lead">Современный сайт для работы с материалами, сменами, поиском, персональными настройками и диалогами с AI.</p>'
+        f'<p class="muted">Сервис открыт по адресу <code>{escape(self.settings.public_web_base_url)}</code>. Вход и регистрация живут отдельно от ботов, а общая база материалов и память ответов синхронизируются автоматически.</p>'
+        f"{error_html}"
+        '<div class="toolbar"><a class="ghost-link" href="/login">Войти</a><a class="ghost-link" href="/register">Создать аккаунт</a></div>'
+        "</div>"
+        '<div class="hero-side summary">'
+        '<div class="summary-tile"><span class="meta-label">Формат</span><strong>Один интерфейс</strong><span class="meta-note">Чат, настройки, смены, поиск и поддержка внутри сайта.</span></div>'
+        '<div class="summary-tile"><span class="meta-label">Данные</span><strong>Общая память</strong><span class="meta-note">Материалы и RAG-поиск едины для сайта и ботов.</span></div>'
+        '<div class="summary-tile"><span class="meta-label">Аккаунты</span><strong>Отдельный вход</strong><span class="meta-note">Пользователи сайта не привязываются к аккаунтам в ботах.</span></div>'
+        '<div class="summary-tile"><span class="meta-label">AI</span><strong>Гибкая настройка</strong><span class="meta-note">API token, prompt и стиль ответов вынесены на отдельную страницу.</span></div>'
+        "</div>"
+        "</section>"
+        f'<section class="entry-grid">{feature_cards}</section>'
+        "</main></body></html>"
+    )
+
+
+async def _public_web_handle_login(self: PublicWebServer, request: web.Request) -> web.StreamResponse:
+    fields = await self._read_simple_fields(request)
+    username = fields.get("username", "").strip().lower()
+    password = fields.get("password", "").strip()
+    if not username:
+        return web.Response(
+            text=self._render_login_page(error_text="Введите логин сайта.", username=username),
+            content_type="text/html",
+            status=400,
+        )
+    if not password:
+        return web.Response(
+            text=self._render_login_page(error_text="Введите пароль сайта.", username=username),
+            content_type="text/html",
+            status=400,
+        )
+
+    context, account = self._find_site_account(username)
+    if context is None or account is None:
+        return web.Response(
+            text=self._render_login_page(
+                error_text="Такой аккаунт сайта не найден или еще не активирован.",
+                username=username,
+            ),
+            content_type="text/html",
+            status=403,
+        )
+    if not verify_password(password, str(account.get("password_hash") or "")):
+        return web.Response(
+            text=self._render_login_page(error_text="Неверный логин или пароль сайта.", username=username),
+            content_type="text/html",
+            status=403,
+        )
+
+    try:
+        user_id = int(account.get("platform_user_id") or 0)
+    except (TypeError, ValueError):
+        user_id = 0
+    if user_id == 0:
+        return web.Response(
+            text=self._render_login_page(
+                error_text="Аккаунт сайта настроен некорректно. Обратитесь к команде проекта.",
+                username=username,
+            ),
+            content_type="text/html",
+            status=400,
+        )
+
+    banned, ban_reason = context.app_service.is_banned(user_id)
+    if banned:
+        reason_text = f"Причина: {ban_reason}" if ban_reason else "Доступ заблокирован."
+        return web.Response(
+            text=self._render_login_page(error_text=reason_text, username=username),
+            content_type="text/html",
+            status=403,
+        )
+
+    resolved_name = str(account.get("display_name") or "").strip() or self._resolve_display_name(context, user_id)
+    return self._open_public_session(
+        context=context,
+        user_id=user_id,
+        display_name=resolved_name,
+        username=username,
+        notice_text="Вход выполнен. Добро пожаловать в рабочее пространство сайта.",
+    )
+
+
+async def _public_web_handle_register(self: PublicWebServer, request: web.Request) -> web.StreamResponse:
+    fields = await self._read_simple_fields(request)
+    username = fields.get("username", "").strip().lower()
+    password = fields.get("password", "").strip()
+    password_repeat = fields.get("password_repeat", "").strip()
+    display_name = fields.get("display_name", "").strip()
+    context = self._site_context()
+
+    if len(username) < 3:
+        return web.Response(
+            text=self._render_register_page(
+                error_text="Логин должен содержать минимум 3 символа.",
+                username=username,
+                display_name=display_name,
+            ),
+            content_type="text/html",
+            status=400,
+        )
+    if any(ch.isspace() for ch in username):
+        return web.Response(
+            text=self._render_register_page(
+                error_text="Логин не должен содержать пробелы.",
+                username=username,
+                display_name=display_name,
+            ),
+            content_type="text/html",
+            status=400,
+        )
+    if len(password) < 8:
+        return web.Response(
+            text=self._render_register_page(
+                error_text="Пароль должен содержать минимум 8 символов.",
+                username=username,
+                display_name=display_name,
+            ),
+            content_type="text/html",
+            status=400,
+        )
+    if password != password_repeat:
+        return web.Response(
+            text=self._render_register_page(
+                error_text="Пароли не совпадают. Регистрация не выполнена.",
+                username=username,
+                display_name=display_name,
+            ),
+            content_type="text/html",
+            status=400,
+        )
+
+    existing_context, existing_account = self._find_site_account_any(username)
+    if existing_context is not None and existing_account is not None:
+        return web.Response(
+            text=self._render_register_page(
+                error_text="Такой логин уже занят.",
+                username=username,
+                display_name=display_name,
+            ),
+            content_type="text/html",
+            status=409,
+        )
+
+    user_id = context.app_service.next_site_platform_user_id()
+    resolved_name = display_name or f"Пользователь {username}"
+    context.app_service.upsert_site_account(
+        username=username,
+        password_hash=hash_password(password),
+        display_name=resolved_name,
+        platform_user_id=user_id,
+        is_active=True,
+    )
+    context.app_service.log_event(
+        user_id=user_id,
+        chat_id=user_id,
+        event_type="site_registration",
+        sender_profile=SenderProfile(first_name=resolved_name),
+        details={"platform": context.slug, "surface": "web"},
+    )
+    return self._open_public_session(
+        context=context,
+        user_id=user_id,
+        display_name=resolved_name,
+        username=username,
+        notice_text="Регистрация завершена. Сайт-аккаунт создан и готов к работе.",
+    )
+
+
+PublicWebServer._open_public_session = _public_web_open_public_session
+PublicWebServer._render_landing = _public_web_render_landing
+PublicWebServer._handle_login = _public_web_handle_login
+PublicWebServer._handle_register = _public_web_handle_register
+
+
+class PublicWebServer(PublicWebServer):
+    def _open_public_session(
+        self,
+        *,
+        context: PublicPlatformContext,
+        user_id: int,
+        display_name: str,
+        username: str,
+        notice_text: str,
+    ) -> web.StreamResponse:
+        session_id = secrets.token_urlsafe(32)
+        self._sessions[session_id] = PublicSiteSession(
+            session_id=session_id,
+            platform_slug=context.slug,
+            user_id=user_id,
+            display_name=display_name,
+            chat_session=ChatSession(recent_messages=deque(maxlen=max(self.settings.conversation_context_messages * 2, 12))),
+            username=username,
+            notice_text=notice_text,
+        )
+        response = web.HTTPFound("/app")
+        response.set_cookie(
+            self.SESSION_COOKIE_NAME,
+            session_id,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+            secure=self._cookie_secure(),
+        )
+        raise response
+
+    def _render_landing(self, *, error_text: str) -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        feature_cards = (
+            '<section class="entry telegram"><span class="pill">Чат</span><h2>Один рабочий экран</h2><p>Диалог, поиск по материалам, смены, история ответов и быстрые действия собраны в одном интерфейсе.</p><p class="muted">Сайт одинаково удобно работает на телефоне и на компьютере.</p></section>'
+            '<section class="entry vk"><span class="pill">Настройки</span><h2>Глубокая кастомизация</h2><p>Отдельные страницы для профиля, AI-настроек, API token, prompt и персонального режима работы.</p><p class="muted">Вход и регистрация сайта полностью отдельные от ботов.</p></section>'
+            '<section class="entry telegram"><span class="pill">Поддержка</span><h2>Связь с администрацией</h2><p>Если что-то сломалось, можно открыть отдельный диалог поддержки, который сразу виден команде проекта.</p><p class="muted">Вся история обращений сохраняется прямо в базе сайта.</p></section>'
+        )
+        return (
+            f"{self._head_html('Letovo Assistant')}"
+            '<body class="site home"><main class="page">'
+            '<section class="hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Веб-платформа</span>'
+            '<h1>Letovo Assistant</h1>'
+            '<p class="lead">Современный сайт для работы с материалами, сменами, поиском, персональными настройками и диалогами с AI.</p>'
+            f'<p class="muted">Сервис открыт по адресу <code>{escape(self.settings.public_web_base_url)}</code>. Сайт использует отдельные логин и пароль, а общими с ботами остаются только база материалов и RAG-память.</p>'
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/login">Войти</a><a class="ghost-link" href="/register">Создать аккаунт</a></div>'
+            '</div>'
+            '<div class="hero-side summary">'
+            '<div class="summary-tile"><span class="meta-label">Формат</span><strong>Один интерфейс</strong><span class="meta-note">Чат, настройки, смены и поддержка внутри сайта.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Данные</span><strong>Общая память</strong><span class="meta-note">Материалы и RAG-поиск общие с ботами через одну базу.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Аккаунты</span><strong>Отдельный вход</strong><span class="meta-note">Сайт не синхронизирует пользователей с ботами.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">AI</span><strong>Гибкая настройка</strong><span class="meta-note">API token, prompt и профиль ответа вынесены в отдельный раздел.</span></div>'
+            '</div>'
+            '</section>'
+            f'<section class="entry-grid">{feature_cards}</section>'
+            '</main></body></html>'
+        )
+
+    def _render_public_nav(self, active: str) -> str:
+        items = [
+            ("dashboard", "/app", "Чат"),
+            ("settings", "/settings", "Настройки"),
+            ("settings-api", "/settings/api", "AI и API"),
+            ("support", "/support", "Поддержка"),
+        ]
+        links = []
+        for key, href, label in items:
+            if active == key:
+                links.append(f'<span class="pill">{escape(label)}</span>')
+            else:
+                links.append(f'<a class="ghost-link" href="{href}">{escape(label)}</a>')
+        return (
+            '<div class="toolbar">'
+            f'<div class="switcher">{"".join(links)}</div>'
+            '<div class="toolbar">'
+            '<a class="ghost-link" href="/">Главная</a>'
+            '<form method="post" action="/logout" class="inline-form"><button type="submit" class="ghost">Выйти</button></form>'
+            "</div>"
+            "</div>"
+        )
+
+    def _render_command_buttons(self, context: PublicPlatformContext, commands: list[dict[str, Any]]) -> str:
+        if not commands:
+            return '<p class="muted">Дополнительные команды пока не настроены.</p>'
+        buttons = []
+        for row in commands[:18]:
+            command_name = str(row.get("command_name") or "").strip()
+            if not command_name:
+                continue
+            buttons.append(
+                '<form method="post" action="/command/run" class="command-form">'
+                f'<input type="hidden" name="command_name" value="{escape(command_name)}">'
+                f'<button type="submit" class="ghost">{escape(command_name)}</button>'
+                '</form>'
+            )
+        return f'<div class="command-grid">{"".join(buttons)}</div>'
+
+    def _render_department_action_card(
+        self,
+        context: PublicPlatformContext,
+        session: PublicSiteSession,
+        action: dict[str, str] | None,
+    ) -> str:
+        user_department = context.app_service.get_user_department(session.user_id)
+        if not action and user_department != "проект 11":
+            return ""
+        if user_department == "проект 11":
+            options_html = "".join(
+                f'<option value="{escape(label)}">{escape(label)}</option>'
+                for label in context.app_service.all_department_action_labels()
+            )
+            return (
+                '<section class="card primary">'
+                '<span class="eyebrow">Проект 11</span>'
+                '<h2>Любой спец-режим на сегодня</h2>'
+                f'<p class="muted">{escape(context.app_service.department_action_picker_prompt())}</p>'
+                '<form method="post" action="/department/action" class="stack">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Режим<select name="action_label" required>{options_html}</select></label>'
+                '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+                '<button type="submit">Запустить анализ</button>'
+                '</form>'
+                '</section>'
+            )
+        if action is None:
+            return ""
+        return (
+            '<section class="card primary">'
+            f'<span class="eyebrow">{escape(str(action.get("department") or ""))}</span>'
+            f'<h2>{escape(str(action.get("title") or "Спец-режим"))}</h2>'
+            '<p class="muted">Базовый лимит этого режима обновляется каждый день. Если для вас доступны дополнительные спец-запросы, они будут учтены автоматически.</p>'
+            '<form method="post" action="/department/action" class="stack">'
+            '<input type="hidden" name="return_to" value="dashboard">'
+            '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+            f'<button type="submit">{escape(str(action.get("button") or "Запустить"))}</button>'
+            '</form>'
+            '</section>'
+        )
+
+    def _render_managed_choice_card(
+        self,
+        context: PublicPlatformContext,
+        pending: ManagedAnswerChoice | None,
+    ) -> str:
+        if pending is None:
+            return ""
+        buttons_html = "".join(
+            '<form method="post" action="/managed-answer" class="choice-form">'
+            f'<input type="hidden" name="option_id" value="{option.option_id}">'
+            f'<button type="submit">{escape(option.option_label)}</button>'
+            '</form>'
+            for option in pending.options
+        )
+        return (
+            '<section class="card spotlight managed-choice">'
+            '<span class="eyebrow">Готовые ответы</span>'
+            '<h2>Выберите вариант</h2>'
+            f'<p class="muted">Вопрос: {escape(pending.question)}</p>'
+            f'<div class="choice-grid">{buttons_html}</div>'
+            '</section>'
+        )
+
+    def _render_dashboard(self, context: PublicPlatformContext, session: PublicSiteSession) -> str:
+        banned, ban_reason = context.app_service.is_banned(session.user_id)
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        department = context.app_service.get_user_department(session.user_id)
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        bonus_requests = context.app_service.get_user_bonus_requests(session.user_id)
+        shifts = context.app_service.list_shifts(limit=60)
+        custom_commands = [row for row in context.app_service.list_custom_commands() if int(row.get("enabled") or 0)]
+        recent_events = context.app_service.list_user_events(user_id=session.user_id, limit=16)
+        user_stats = context.app_service.get_user_statistics(str(session.user_id))
+        stats_row = user_stats[0] if user_stats else {}
+        department_options_html = "".join(
+            f'<option value="{escape(option)}"{" selected" if option == department else ""}>{escape(option)}</option>'
+            for option in context.app_service.department_options()
+        )
+        action = context.app_service.department_action_for_user(session.user_id)
+        notice_html = f'<div class="banner ok">{escape(session.notice_text)}</div>' if session.notice_text else ""
+        error_html = f'<div class="banner err">{escape(session.error_text)}</div>' if session.error_text else ""
+        managed_choice_html = self._render_managed_choice_card(context, session.chat_session.pending_managed_choice)
+
+        if banned:
+            reason_text = ban_reason or "Причина не указана."
+            content_html = (
+                '<section class="card blocked">'
+                '<span class="eyebrow">Доступ ограничен</span>'
+                '<h2>Ваш аккаунт заблокирован</h2>'
+                f'<p class="lead">{escape(reason_text)}</p>'
+                '<p class="muted">Если это ошибка, откройте страницу поддержки и опишите ситуацию.</p>'
+                '</section>'
+            )
+        elif not department:
+            content_html = (
+                '<section class="card spotlight">'
+                '<span class="eyebrow">Обязательный шаг</span>'
+                '<h2>Выберите департамент</h2>'
+                '<p class="lead">После выбора департамента сайт активирует правильные лимиты, профиль ответов и специальные режимы именно для вашего рабочего пространства.</p>'
+                '<form method="post" action="/department/save" class="grid one">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Департамент<select name="department" required>{department_options_html}</select></label>'
+                '<div class="action-wrap"><button type="submit">Сохранить и открыть чат</button></div>'
+                '</form>'
+                '</section>'
+            )
+        else:
+            chat_html = self._render_chat_panel(context, session)
+            result_panel = self._render_result_panel(session)
+            commands_html = self._render_command_buttons(context, custom_commands)
+            shifts_html = self._render_shift_list(shifts)
+            events_html = self._render_event_list(recent_events)
+            action_html = self._render_department_action_card(context, session, action)
+            content_html = (
+                '<section class="workspace">'
+                '<section class="chat-column">'
+                '<section class="card chat-shell">'
+                '<div class="chat-shell-head"><div><span class="eyebrow">Чат</span><h2>Главный диалог</h2><p class="muted">Задавайте вопросы по материалам, ищите факты по датам и сменам, запускайте готовые сценарии и получайте текстовые ответы прямо в ленте.</p></div>'
+                f'<div class="chat-metrics"><span class="metric"><strong>{bonus_requests}</strong><small>бонусов</small></span><span class="metric"><strong>{int(stats_row.get("charged_today_count") or 0)}</strong><small>списаний</small></span></div></div>'
+                '<form method="post" action="/ask" class="chat-composer">'
+                '<textarea name="question" rows="4" placeholder="Например: что происходило в смене 01-07-2025..11-07-2025 и есть ли материалы по World News 24?" required></textarea>'
+                '<div class="composer-actions"><button type="submit">Отправить вопрос</button></div>'
+                '</form>'
+                f'{managed_choice_html}'
+                f'{chat_html}'
+                '</section>'
+                f'{result_panel}'
+                '</section>'
+                '<aside class="sidebar-column">'
+                '<section class="card side-panel sticky-panel">'
+                '<span class="eyebrow">Сводка</span><h2>Рабочая панель</h2>'
+                f'<div class="mini-list"><div class="mini-item"><strong>Департамент</strong><span>{escape(department)}</span></div><div class="mini-item"><strong>Prompt профиль</strong><span>{escape(prompt_profile_label)}</span></div><div class="mini-item"><strong>API token</strong><span>{"подключен" if has_api else "не подключен"}</span></div><div class="mini-item"><strong>Сегодня</strong><span>Списано запросов: {int(stats_row.get("charged_today_count") or 0)}</span></div></div>'
+                '</section>'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Быстрые действия</span><h2>Поиск и материалы</h2>'
+                '<details class="tool-panel" open><summary>Быстрый поиск</summary><form method="post" action="/search" class="stack compact-form"><input name="query" placeholder="Ключевые слова, люди, компании" required><button type="submit">Искать</button></form></details>'
+                '<details class="tool-panel"><summary>Дата или смена</summary><form method="post" action="/list" class="stack compact-form"><input name="query" placeholder="21-03-2026 или название смены" required><button type="submit">Показать список</button></form></details>'
+                '<details class="tool-panel"><summary>Материал по ID</summary><form method="post" action="/file" class="stack compact-form"><input name="item_id" inputmode="numeric" placeholder="Например 123" required><button type="submit">Показать материал</button></form><p class="muted">Сайт показывает извлеченную информацию, а не сам файл.</p></details>'
+                '<details class="tool-panel"><summary>Промокод</summary><form method="post" action="/promo" class="stack compact-form"><input name="code" placeholder="Введите промокод" required><button type="submit">Активировать</button></form></details>'
+                '</section>'
+                f'{action_html}'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Дополнительно</span><h2>Команды, смены и события</h2>'
+                f'<details class="tool-panel" open><summary>Кастомные команды</summary>{commands_html}</details>'
+                f'<details class="tool-panel"><summary>Смены</summary>{shifts_html}</details>'
+                f'<details class="tool-panel"><summary>Последние события</summary>{events_html}</details>'
+                '</section>'
+                '</aside>'
+                '</section>'
+            )
+
+        return (
+            f"{self._head_html('Рабочее пространство')}"
+            '<body class="site"><main class="page">'
+            '<section class="hero dashboard-hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Рабочее пространство</span>'
+            '<h1>Letovo Assistant</h1>'
+            f'<p class="lead">{escape(context.subtitle)}</p>'
+            '<p class="muted">Главная страница сайта: чат, быстрый поиск, работа со сменами, история запросов и доступ к общей RAG-памяти материалов.</p>'
+            '</div>'
+            '<div class="hero-side summary">'
+            f'<div class="summary-tile"><span class="meta-label">Пользователь</span><strong>{escape(session.display_name)}</strong><span class="meta-note">@{escape(session.username or "site-user")}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Департамент</span><strong>{escape(department or "не выбран")}</strong><span class="meta-note">Профиль: {escape(prompt_profile_label)}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">API token</span><strong>{"подключен" if has_api else "не подключен"}</strong><span class="meta-note">AI-настройки на отдельной странице</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Лимиты</span><strong>{bonus_requests}</strong><span class="meta-note">Сегодня списано: {int(stats_row.get("charged_today_count") or 0)}</span></div>'
+            '</div>'
+            '</section>'
+            f'{self._render_public_nav("dashboard")}'
+            f'{notice_html}{error_html}{content_html}'
+            '</main></body></html>'
+        )
+
+
+
+
+
+    def _open_public_session(
+        self,
+        *,
+        context: PublicPlatformContext,
+        user_id: int,
+        display_name: str,
+        username: str,
+        notice_text: str,
+    ) -> web.StreamResponse:
+        session_id = secrets.token_urlsafe(32)
+        self._sessions[session_id] = PublicSiteSession(
+            session_id=session_id,
+            platform_slug=context.slug,
+            user_id=user_id,
+            display_name=display_name,
+            chat_session=ChatSession(recent_messages=deque(maxlen=max(self.settings.conversation_context_messages * 2, 12))),
+            username=username,
+            notice_text=notice_text,
+        )
+        response = web.HTTPFound("/app")
+        response.set_cookie(
+            self.SESSION_COOKIE_NAME,
+            session_id,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+            secure=self._cookie_secure(),
+        )
+        raise response
+
+    def _render_landing(self, *, error_text: str) -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        feature_cards = (
+            '<section class="entry telegram"><span class="pill">Чат</span><h2>Один рабочий экран</h2><p>Диалог, поиск по материалам, смены, история ответов и быстрые действия собраны в одном интерфейсе.</p><p class="muted">Сайт одинаково удобно работает на телефоне и на компьютере.</p></section>'
+            '<section class="entry vk"><span class="pill">Настройки</span><h2>Глубокая кастомизация</h2><p>Отдельные страницы для профиля, AI-настроек, API token, prompt и персонального режима работы.</p><p class="muted">Вход и регистрация сайта полностью отдельные от ботов.</p></section>'
+            '<section class="entry telegram"><span class="pill">Поддержка</span><h2>Связь с администрацией</h2><p>Если что-то сломалось, можно открыть отдельный диалог поддержки, который сразу виден команде проекта.</p><p class="muted">Вся история обращений сохраняется прямо в базе сайта.</p></section>'
+        )
+        return (
+            f"{self._head_html('Letovo Assistant')}"
+            '<body class="site home"><main class="page">'
+            '<section class="hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Веб-платформа</span>'
+            '<h1>Letovo Assistant</h1>'
+            '<p class="lead">Современный сайт для работы с материалами, сменами, поиском, персональными настройками и диалогами с AI.</p>'
+            f'<p class="muted">Сервис открыт по адресу <code>{escape(self.settings.public_web_base_url)}</code>. Сайт использует отдельные логин и пароль, а общими с ботами остаются только база материалов и RAG-память.</p>'
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/login">Войти</a><a class="ghost-link" href="/register">Создать аккаунт</a></div>'
+            '</div>'
+            '<div class="hero-side summary">'
+            '<div class="summary-tile"><span class="meta-label">Формат</span><strong>Один интерфейс</strong><span class="meta-note">Чат, настройки, смены и поддержка внутри сайта.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Данные</span><strong>Общая память</strong><span class="meta-note">Материалы и RAG-поиск общие с ботами через одну базу.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Аккаунты</span><strong>Отдельный вход</strong><span class="meta-note">Сайт не синхронизирует пользователей с ботами.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">AI</span><strong>Гибкая настройка</strong><span class="meta-note">API token, prompt и профиль ответа вынесены в отдельный раздел.</span></div>'
+            '</div>'
+            '</section>'
+            f'<section class="entry-grid">{feature_cards}</section>'
+            '</main></body></html>'
+        )
+
+    def _render_public_nav(self, active: str) -> str:
+        items = [
+            ("dashboard", "/app", "Чат"),
+            ("settings", "/settings", "Настройки"),
+            ("settings-api", "/settings/api", "AI и API"),
+            ("support", "/support", "Поддержка"),
+        ]
+        links = []
+        for key, href, label in items:
+            if active == key:
+                links.append(f'<span class="pill">{escape(label)}</span>')
+            else:
+                links.append(f'<a class="ghost-link" href="{href}">{escape(label)}</a>')
+        return (
+            '<div class="toolbar">'
+            f'<div class="switcher">{"".join(links)}</div>'
+            '<div class="toolbar">'
+            '<a class="ghost-link" href="/">Главная</a>'
+            '<form method="post" action="/logout" class="inline-form"><button type="submit" class="ghost">Выйти</button></form>'
+            "</div>"
+            "</div>"
+        )
+
+    def _render_command_buttons(self, context: PublicPlatformContext, commands: list[dict[str, Any]]) -> str:
+        if not commands:
+            return '<p class="muted">Дополнительные команды пока не настроены.</p>'
+        buttons = []
+        for row in commands[:18]:
+            command_name = str(row.get("command_name") or "").strip()
+            if not command_name:
+                continue
+            buttons.append(
+                '<form method="post" action="/command/run" class="command-form">'
+                f'<input type="hidden" name="command_name" value="{escape(command_name)}">'
+                f'<button type="submit" class="ghost">{escape(command_name)}</button>'
+                '</form>'
+            )
+        return f'<div class="command-grid">{"".join(buttons)}</div>'
+
+    def _render_department_action_card(
+        self,
+        context: PublicPlatformContext,
+        session: PublicSiteSession,
+        action: dict[str, str] | None,
+    ) -> str:
+        user_department = context.app_service.get_user_department(session.user_id)
+        if not action and user_department != "проект 11":
+            return ""
+        if user_department == "проект 11":
+            options_html = "".join(
+                f'<option value="{escape(label)}">{escape(label)}</option>'
+                for label in context.app_service.all_department_action_labels()
+            )
+            return (
+                '<section class="card primary">'
+                '<span class="eyebrow">Проект 11</span>'
+                '<h2>Любой спец-режим на сегодня</h2>'
+                f'<p class="muted">{escape(context.app_service.department_action_picker_prompt())}</p>'
+                '<form method="post" action="/department/action" class="stack">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Режим<select name="action_label" required>{options_html}</select></label>'
+                '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+                '<button type="submit">Запустить анализ</button>'
+                '</form>'
+                '</section>'
+            )
+        if action is None:
+            return ""
+        return (
+            '<section class="card primary">'
+            f'<span class="eyebrow">{escape(str(action.get("department") or ""))}</span>'
+            f'<h2>{escape(str(action.get("title") or "Спец-режим"))}</h2>'
+            '<p class="muted">Базовый лимит этого режима обновляется каждый день. Если для вас доступны дополнительные спец-запросы, они будут учтены автоматически.</p>'
+            '<form method="post" action="/department/action" class="stack">'
+            '<input type="hidden" name="return_to" value="dashboard">'
+            '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+            f'<button type="submit">{escape(str(action.get("button") or "Запустить"))}</button>'
+            '</form>'
+            '</section>'
+        )
+
+    def _render_managed_choice_card(
+        self,
+        context: PublicPlatformContext,
+        pending: ManagedAnswerChoice | None,
+    ) -> str:
+        if pending is None:
+            return ""
+        buttons_html = "".join(
+            '<form method="post" action="/managed-answer" class="choice-form">'
+            f'<input type="hidden" name="option_id" value="{option.option_id}">'
+            f'<button type="submit">{escape(option.option_label)}</button>'
+            '</form>'
+            for option in pending.options
+        )
+        return (
+            '<section class="card spotlight managed-choice">'
+            '<span class="eyebrow">Готовые ответы</span>'
+            '<h2>Выберите вариант</h2>'
+            f'<p class="muted">Вопрос: {escape(pending.question)}</p>'
+            f'<div class="choice-grid">{buttons_html}</div>'
+            '</section>'
+        )
+
+    def _render_dashboard(self, context: PublicPlatformContext, session: PublicSiteSession) -> str:
+        banned, ban_reason = context.app_service.is_banned(session.user_id)
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        department = context.app_service.get_user_department(session.user_id)
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        bonus_requests = context.app_service.get_user_bonus_requests(session.user_id)
+        shifts = context.app_service.list_shifts(limit=60)
+        custom_commands = [row for row in context.app_service.list_custom_commands() if int(row.get("enabled") or 0)]
+        recent_events = context.app_service.list_user_events(user_id=session.user_id, limit=16)
+        user_stats = context.app_service.get_user_statistics(str(session.user_id))
+        stats_row = user_stats[0] if user_stats else {}
+        department_options_html = "".join(
+            f'<option value="{escape(option)}"{" selected" if option == department else ""}>{escape(option)}</option>'
+            for option in context.app_service.department_options()
+        )
+        action = context.app_service.department_action_for_user(session.user_id)
+        notice_html = f'<div class="banner ok">{escape(session.notice_text)}</div>' if session.notice_text else ""
+        error_html = f'<div class="banner err">{escape(session.error_text)}</div>' if session.error_text else ""
+        managed_choice_html = self._render_managed_choice_card(context, session.chat_session.pending_managed_choice)
+
+        if banned:
+            reason_text = ban_reason or "Причина не указана."
+            content_html = (
+                '<section class="card blocked">'
+                '<span class="eyebrow">Доступ ограничен</span>'
+                '<h2>Ваш аккаунт заблокирован</h2>'
+                f'<p class="lead">{escape(reason_text)}</p>'
+                '<p class="muted">Если это ошибка, откройте страницу поддержки и опишите ситуацию.</p>'
+                '</section>'
+            )
+        elif not department:
+            content_html = (
+                '<section class="card spotlight">'
+                '<span class="eyebrow">Обязательный шаг</span>'
+                '<h2>Выберите департамент</h2>'
+                '<p class="lead">После выбора департамента сайт активирует правильные лимиты, профиль ответов и специальные режимы именно для вашего рабочего пространства.</p>'
+                '<form method="post" action="/department/save" class="grid one">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Департамент<select name="department" required>{department_options_html}</select></label>'
+                '<div class="action-wrap"><button type="submit">Сохранить и открыть чат</button></div>'
+                '</form>'
+                '</section>'
+            )
+        else:
+            chat_html = self._render_chat_panel(context, session)
+            result_panel = self._render_result_panel(session)
+            commands_html = self._render_command_buttons(context, custom_commands)
+            shifts_html = self._render_shift_list(shifts)
+            events_html = self._render_event_list(recent_events)
+            action_html = self._render_department_action_card(context, session, action)
+            content_html = (
+                '<section class="workspace">'
+                '<section class="chat-column">'
+                '<section class="card chat-shell">'
+                '<div class="chat-shell-head"><div><span class="eyebrow">Чат</span><h2>Главный диалог</h2><p class="muted">Задавайте вопросы по материалам, ищите факты по датам и сменам, запускайте готовые сценарии и получайте текстовые ответы прямо в ленте.</p></div>'
+                f'<div class="chat-metrics"><span class="metric"><strong>{bonus_requests}</strong><small>бонусов</small></span><span class="metric"><strong>{int(stats_row.get("charged_today_count") or 0)}</strong><small>списаний</small></span></div></div>'
+                '<form method="post" action="/ask" class="chat-composer">'
+                '<textarea name="question" rows="4" placeholder="Например: что происходило в смене 01-07-2025..11-07-2025 и есть ли материалы по World News 24?" required></textarea>'
+                '<div class="composer-actions"><button type="submit">Отправить вопрос</button></div>'
+                '</form>'
+                f'{managed_choice_html}'
+                f'{chat_html}'
+                '</section>'
+                f'{result_panel}'
+                '</section>'
+                '<aside class="sidebar-column">'
+                '<section class="card side-panel sticky-panel">'
+                '<span class="eyebrow">Сводка</span><h2>Рабочая панель</h2>'
+                f'<div class="mini-list"><div class="mini-item"><strong>Департамент</strong><span>{escape(department)}</span></div><div class="mini-item"><strong>Prompt профиль</strong><span>{escape(prompt_profile_label)}</span></div><div class="mini-item"><strong>API token</strong><span>{"подключен" if has_api else "не подключен"}</span></div><div class="mini-item"><strong>Сегодня</strong><span>Списано запросов: {int(stats_row.get("charged_today_count") or 0)}</span></div></div>'
+                '</section>'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Быстрые действия</span><h2>Поиск и материалы</h2>'
+                '<details class="tool-panel" open><summary>Быстрый поиск</summary><form method="post" action="/search" class="stack compact-form"><input name="query" placeholder="Ключевые слова, люди, компании" required><button type="submit">Искать</button></form></details>'
+                '<details class="tool-panel"><summary>Дата или смена</summary><form method="post" action="/list" class="stack compact-form"><input name="query" placeholder="21-03-2026 или название смены" required><button type="submit">Показать список</button></form></details>'
+                '<details class="tool-panel"><summary>Материал по ID</summary><form method="post" action="/file" class="stack compact-form"><input name="item_id" inputmode="numeric" placeholder="Например 123" required><button type="submit">Показать материал</button></form><p class="muted">Сайт показывает извлеченную информацию, а не сам файл.</p></details>'
+                '<details class="tool-panel"><summary>Промокод</summary><form method="post" action="/promo" class="stack compact-form"><input name="code" placeholder="Введите промокод" required><button type="submit">Активировать</button></form></details>'
+                '</section>'
+                f'{action_html}'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Дополнительно</span><h2>Команды, смены и события</h2>'
+                f'<details class="tool-panel" open><summary>Кастомные команды</summary>{commands_html}</details>'
+                f'<details class="tool-panel"><summary>Смены</summary>{shifts_html}</details>'
+                f'<details class="tool-panel"><summary>Последние события</summary>{events_html}</details>'
+                '</section>'
+                '</aside>'
+                '</section>'
+            )
+
+        return (
+            f"{self._head_html('Рабочее пространство')}"
+            '<body class="site"><main class="page">'
+            '<section class="hero dashboard-hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Рабочее пространство</span>'
+            '<h1>Letovo Assistant</h1>'
+            f'<p class="lead">{escape(context.subtitle)}</p>'
+            '<p class="muted">Главная страница сайта: чат, быстрый поиск, работа со сменами, история запросов и доступ к общей RAG-памяти материалов.</p>'
+            '</div>'
+            '<div class="hero-side summary">'
+            f'<div class="summary-tile"><span class="meta-label">Пользователь</span><strong>{escape(session.display_name)}</strong><span class="meta-note">@{escape(session.username or "site-user")}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Департамент</span><strong>{escape(department or "не выбран")}</strong><span class="meta-note">Профиль: {escape(prompt_profile_label)}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">API token</span><strong>{"подключен" if has_api else "не подключен"}</strong><span class="meta-note">AI-настройки на отдельной странице</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Лимиты</span><strong>{bonus_requests}</strong><span class="meta-note">Сегодня списано: {int(stats_row.get("charged_today_count") or 0)}</span></div>'
+            '</div>'
+            '</section>'
+            f'{self._render_public_nav("dashboard")}'
+            f'{notice_html}{error_html}{content_html}'
+            '</main></body></html>'
+        )
+
+    def _open_public_session(
+        self,
+        *,
+        context: PublicPlatformContext,
+        user_id: int,
+        display_name: str,
+        username: str,
+        notice_text: str,
+    ) -> web.StreamResponse:
+        session_id = secrets.token_urlsafe(32)
+        self._sessions[session_id] = PublicSiteSession(
+            session_id=session_id,
+            platform_slug=context.slug,
+            user_id=user_id,
+            display_name=display_name,
+            chat_session=ChatSession(recent_messages=deque(maxlen=max(self.settings.conversation_context_messages * 2, 12))),
+            username=username,
+            notice_text=notice_text,
+        )
+        response = web.HTTPFound("/app")
+        response.set_cookie(
+            self.SESSION_COOKIE_NAME,
+            session_id,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+            secure=self._cookie_secure(),
+        )
+        raise response
+
+    def _render_landing(self, *, error_text: str) -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        feature_cards = (
+            '<section class="entry telegram"><span class="pill">Чат</span><h2>Один рабочий экран</h2><p>Диалог, поиск по материалам, смены, история ответов и быстрые действия собраны в одном интерфейсе.</p><p class="muted">Сайт одинаково удобно работает на телефоне и на компьютере.</p></section>'
+            '<section class="entry vk"><span class="pill">Настройки</span><h2>Глубокая кастомизация</h2><p>Отдельные страницы для профиля, AI-настроек, API token, prompt и персонального режима работы.</p><p class="muted">Вход и регистрация сайта полностью отдельные от ботов.</p></section>'
+            '<section class="entry telegram"><span class="pill">Поддержка</span><h2>Связь с администрацией</h2><p>Если что-то сломалось, можно открыть отдельный диалог поддержки, который сразу виден команде проекта.</p><p class="muted">Вся история обращений сохраняется прямо в базе сайта.</p></section>'
+        )
+        return (
+            f"{self._head_html('Letovo Assistant')}"
+            '<body class="site home"><main class="page">'
+            '<section class="hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Веб-платформа</span>'
+            '<h1>Letovo Assistant</h1>'
+            '<p class="lead">Современный сайт для работы с материалами, сменами, поиском, персональными настройками и диалогами с AI.</p>'
+            f'<p class="muted">Сервис открыт по адресу <code>{escape(self.settings.public_web_base_url)}</code>. Сайт использует отдельные логин и пароль, а общими с ботами остаются только база материалов и RAG-память.</p>'
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/login">Войти</a><a class="ghost-link" href="/register">Создать аккаунт</a></div>'
+            '</div>'
+            '<div class="hero-side summary">'
+            '<div class="summary-tile"><span class="meta-label">Формат</span><strong>Один интерфейс</strong><span class="meta-note">Чат, настройки, смены и поддержка внутри сайта.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Данные</span><strong>Общая память</strong><span class="meta-note">Материалы и RAG-поиск общие с ботами через одну базу.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Аккаунты</span><strong>Отдельный вход</strong><span class="meta-note">Сайт не синхронизирует пользователей с ботами.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">AI</span><strong>Гибкая настройка</strong><span class="meta-note">API token, prompt и профиль ответа вынесены в отдельный раздел.</span></div>'
+            '</div>'
+            '</section>'
+            f'<section class="entry-grid">{feature_cards}</section>'
+            '</main></body></html>'
+        )
+
+    def _render_public_nav(self, active: str) -> str:
+        items = [
+            ("dashboard", "/app", "Чат"),
+            ("settings", "/settings", "Настройки"),
+            ("settings-api", "/settings/api", "AI и API"),
+            ("support", "/support", "Поддержка"),
+        ]
+        links = []
+        for key, href, label in items:
+            if active == key:
+                links.append(f'<span class="pill">{escape(label)}</span>')
+            else:
+                links.append(f'<a class="ghost-link" href="{href}">{escape(label)}</a>')
+        return (
+            '<div class="toolbar">'
+            f'<div class="switcher">{"".join(links)}</div>'
+            '<div class="toolbar">'
+            '<a class="ghost-link" href="/">Главная</a>'
+            '<form method="post" action="/logout" class="inline-form"><button type="submit" class="ghost">Выйти</button></form>'
+            "</div>"
+            "</div>"
+        )
+
+    def _render_command_buttons(self, context: PublicPlatformContext, commands: list[dict[str, Any]]) -> str:
+        if not commands:
+            return '<p class="muted">Дополнительные команды пока не настроены.</p>'
+        buttons = []
+        for row in commands[:18]:
+            command_name = str(row.get("command_name") or "").strip()
+            if not command_name:
+                continue
+            buttons.append(
+                '<form method="post" action="/command/run" class="command-form">'
+                f'<input type="hidden" name="command_name" value="{escape(command_name)}">'
+                f'<button type="submit" class="ghost">{escape(command_name)}</button>'
+                '</form>'
+            )
+        return f'<div class="command-grid">{"".join(buttons)}</div>'
+
+    def _render_department_action_card(
+        self,
+        context: PublicPlatformContext,
+        session: PublicSiteSession,
+        action: dict[str, str] | None,
+    ) -> str:
+        user_department = context.app_service.get_user_department(session.user_id)
+        if not action and user_department != "проект 11":
+            return ""
+        if user_department == "проект 11":
+            options_html = "".join(
+                f'<option value="{escape(label)}">{escape(label)}</option>'
+                for label in context.app_service.all_department_action_labels()
+            )
+            return (
+                '<section class="card primary">'
+                '<span class="eyebrow">Проект 11</span>'
+                '<h2>Любой спец-режим на сегодня</h2>'
+                f'<p class="muted">{escape(context.app_service.department_action_picker_prompt())}</p>'
+                '<form method="post" action="/department/action" class="stack">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Режим<select name="action_label" required>{options_html}</select></label>'
+                '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+                '<button type="submit">Запустить анализ</button>'
+                '</form>'
+                '</section>'
+            )
+        if action is None:
+            return ""
+        return (
+            '<section class="card primary">'
+            f'<span class="eyebrow">{escape(str(action.get("department") or ""))}</span>'
+            f'<h2>{escape(str(action.get("title") or "Спец-режим"))}</h2>'
+            '<p class="muted">Базовый лимит этого режима обновляется каждый день. Если для вас доступны дополнительные спец-запросы, они будут учтены автоматически.</p>'
+            '<form method="post" action="/department/action" class="stack">'
+            '<input type="hidden" name="return_to" value="dashboard">'
+            '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+            f'<button type="submit">{escape(str(action.get("button") or "Запустить"))}</button>'
+            '</form>'
+            '</section>'
+        )
+
+    def _render_managed_choice_card(
+        self,
+        context: PublicPlatformContext,
+        pending: ManagedAnswerChoice | None,
+    ) -> str:
+        if pending is None:
+            return ""
+        buttons_html = "".join(
+            '<form method="post" action="/managed-answer" class="choice-form">'
+            f'<input type="hidden" name="option_id" value="{option.option_id}">'
+            f'<button type="submit">{escape(option.option_label)}</button>'
+            '</form>'
+            for option in pending.options
+        )
+        return (
+            '<section class="card spotlight managed-choice">'
+            '<span class="eyebrow">Готовые ответы</span>'
+            '<h2>Выберите вариант</h2>'
+            f'<p class="muted">Вопрос: {escape(pending.question)}</p>'
+            f'<div class="choice-grid">{buttons_html}</div>'
+            '</section>'
+        )
+
+    def _render_dashboard(self, context: PublicPlatformContext, session: PublicSiteSession) -> str:
+        banned, ban_reason = context.app_service.is_banned(session.user_id)
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        department = context.app_service.get_user_department(session.user_id)
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        bonus_requests = context.app_service.get_user_bonus_requests(session.user_id)
+        shifts = context.app_service.list_shifts(limit=60)
+        custom_commands = [row for row in context.app_service.list_custom_commands() if int(row.get("enabled") or 0)]
+        recent_events = context.app_service.list_user_events(user_id=session.user_id, limit=16)
+        user_stats = context.app_service.get_user_statistics(str(session.user_id))
+        stats_row = user_stats[0] if user_stats else {}
+        department_options_html = "".join(
+            f'<option value="{escape(option)}"{" selected" if option == department else ""}>{escape(option)}</option>'
+            for option in context.app_service.department_options()
+        )
+        action = context.app_service.department_action_for_user(session.user_id)
+        notice_html = f'<div class="banner ok">{escape(session.notice_text)}</div>' if session.notice_text else ""
+        error_html = f'<div class="banner err">{escape(session.error_text)}</div>' if session.error_text else ""
+        managed_choice_html = self._render_managed_choice_card(context, session.chat_session.pending_managed_choice)
+
+        if banned:
+            reason_text = ban_reason or "Причина не указана."
+            content_html = (
+                '<section class="card blocked">'
+                '<span class="eyebrow">Доступ ограничен</span>'
+                '<h2>Ваш аккаунт заблокирован</h2>'
+                f'<p class="lead">{escape(reason_text)}</p>'
+                '<p class="muted">Если это ошибка, откройте страницу поддержки и опишите ситуацию.</p>'
+                '</section>'
+            )
+        elif not department:
+            content_html = (
+                '<section class="card spotlight">'
+                '<span class="eyebrow">Обязательный шаг</span>'
+                '<h2>Выберите департамент</h2>'
+                '<p class="lead">После выбора департамента сайт активирует правильные лимиты, профиль ответов и специальные режимы именно для вашего рабочего пространства.</p>'
+                '<form method="post" action="/department/save" class="grid one">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Департамент<select name="department" required>{department_options_html}</select></label>'
+                '<div class="action-wrap"><button type="submit">Сохранить и открыть чат</button></div>'
+                '</form>'
+                '</section>'
+            )
+        else:
+            chat_html = self._render_chat_panel(context, session)
+            result_panel = self._render_result_panel(session)
+            commands_html = self._render_command_buttons(context, custom_commands)
+            shifts_html = self._render_shift_list(shifts)
+            events_html = self._render_event_list(recent_events)
+            action_html = self._render_department_action_card(context, session, action)
+            content_html = (
+                '<section class="workspace">'
+                '<section class="chat-column">'
+                '<section class="card chat-shell">'
+                '<div class="chat-shell-head"><div><span class="eyebrow">Чат</span><h2>Главный диалог</h2><p class="muted">Задавайте вопросы по материалам, ищите факты по датам и сменам, запускайте готовые сценарии и получайте текстовые ответы прямо в ленте.</p></div>'
+                f'<div class="chat-metrics"><span class="metric"><strong>{bonus_requests}</strong><small>бонусов</small></span><span class="metric"><strong>{int(stats_row.get("charged_today_count") or 0)}</strong><small>списаний</small></span></div></div>'
+                '<form method="post" action="/ask" class="chat-composer">'
+                '<textarea name="question" rows="4" placeholder="Например: что происходило в смене 01-07-2025..11-07-2025 и есть ли материалы по World News 24?" required></textarea>'
+                '<div class="composer-actions"><button type="submit">Отправить вопрос</button></div>'
+                '</form>'
+                f'{managed_choice_html}'
+                f'{chat_html}'
+                '</section>'
+                f'{result_panel}'
+                '</section>'
+                '<aside class="sidebar-column">'
+                '<section class="card side-panel sticky-panel">'
+                '<span class="eyebrow">Сводка</span><h2>Рабочая панель</h2>'
+                f'<div class="mini-list"><div class="mini-item"><strong>Департамент</strong><span>{escape(department)}</span></div><div class="mini-item"><strong>Prompt профиль</strong><span>{escape(prompt_profile_label)}</span></div><div class="mini-item"><strong>API token</strong><span>{"подключен" if has_api else "не подключен"}</span></div><div class="mini-item"><strong>Сегодня</strong><span>Списано запросов: {int(stats_row.get("charged_today_count") or 0)}</span></div></div>'
+                '</section>'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Быстрые действия</span><h2>Поиск и материалы</h2>'
+                '<details class="tool-panel" open><summary>Быстрый поиск</summary><form method="post" action="/search" class="stack compact-form"><input name="query" placeholder="Ключевые слова, люди, компании" required><button type="submit">Искать</button></form></details>'
+                '<details class="tool-panel"><summary>Дата или смена</summary><form method="post" action="/list" class="stack compact-form"><input name="query" placeholder="21-03-2026 или название смены" required><button type="submit">Показать список</button></form></details>'
+                '<details class="tool-panel"><summary>Материал по ID</summary><form method="post" action="/file" class="stack compact-form"><input name="item_id" inputmode="numeric" placeholder="Например 123" required><button type="submit">Показать материал</button></form><p class="muted">Сайт показывает извлеченную информацию, а не сам файл.</p></details>'
+                '<details class="tool-panel"><summary>Промокод</summary><form method="post" action="/promo" class="stack compact-form"><input name="code" placeholder="Введите промокод" required><button type="submit">Активировать</button></form></details>'
+                '</section>'
+                f'{action_html}'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Дополнительно</span><h2>Команды, смены и события</h2>'
+                f'<details class="tool-panel" open><summary>Кастомные команды</summary>{commands_html}</details>'
+                f'<details class="tool-panel"><summary>Смены</summary>{shifts_html}</details>'
+                f'<details class="tool-panel"><summary>Последние события</summary>{events_html}</details>'
+                '</section>'
+                '</aside>'
+                '</section>'
+            )
+
+        return (
+            f"{self._head_html('Рабочее пространство')}"
+            '<body class="site"><main class="page">'
+            '<section class="hero dashboard-hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Рабочее пространство</span>'
+            '<h1>Letovo Assistant</h1>'
+            f'<p class="lead">{escape(context.subtitle)}</p>'
+            '<p class="muted">Главная страница сайта: чат, быстрый поиск, работа со сменами, история запросов и доступ к общей RAG-памяти материалов.</p>'
+            '</div>'
+            '<div class="hero-side summary">'
+            f'<div class="summary-tile"><span class="meta-label">Пользователь</span><strong>{escape(session.display_name)}</strong><span class="meta-note">@{escape(session.username or "site-user")}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Департамент</span><strong>{escape(department or "не выбран")}</strong><span class="meta-note">Профиль: {escape(prompt_profile_label)}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">API token</span><strong>{"подключен" if has_api else "не подключен"}</strong><span class="meta-note">AI-настройки на отдельной странице</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Лимиты</span><strong>{bonus_requests}</strong><span class="meta-note">Сегодня списано: {int(stats_row.get("charged_today_count") or 0)}</span></div>'
+            '</div>'
+            '</section>'
+            f'{self._render_public_nav("dashboard")}'
+            f'{notice_html}{error_html}{content_html}'
+            '</main></body></html>'
+        )
+
+    def _open_public_session(
+        self,
+        *,
+        context: PublicPlatformContext,
+        user_id: int,
+        display_name: str,
+        username: str,
+        notice_text: str,
+    ) -> web.StreamResponse:
+        session_id = secrets.token_urlsafe(32)
+        self._sessions[session_id] = PublicSiteSession(
+            session_id=session_id,
+            platform_slug=context.slug,
+            user_id=user_id,
+            display_name=display_name,
+            chat_session=ChatSession(recent_messages=deque(maxlen=max(self.settings.conversation_context_messages * 2, 12))),
+            username=username,
+            notice_text=notice_text,
+        )
+        response = web.HTTPFound("/app")
+        response.set_cookie(
+            self.SESSION_COOKIE_NAME,
+            session_id,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+            secure=self._cookie_secure(),
+        )
+        raise response
+
+    def _render_landing(self, *, error_text: str) -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        feature_cards = (
+            '<section class="entry telegram"><span class="pill">Чат</span><h2>Один рабочий экран</h2><p>Диалог, поиск по материалам, смены, история ответов и быстрые действия собраны в одном интерфейсе.</p><p class="muted">Сайт одинаково удобно работает на телефоне и на компьютере.</p></section>'
+            '<section class="entry vk"><span class="pill">Настройки</span><h2>Глубокая кастомизация</h2><p>Отдельные страницы для профиля, AI-настроек, API token, prompt и персонального режима работы.</p><p class="muted">Вход и регистрация сайта полностью отдельные от ботов.</p></section>'
+            '<section class="entry telegram"><span class="pill">Поддержка</span><h2>Связь с администрацией</h2><p>Если что-то сломалось, можно открыть отдельный диалог поддержки, который сразу виден команде проекта.</p><p class="muted">Вся история обращений сохраняется прямо в базе сайта.</p></section>'
+        )
+        return (
+            f"{self._head_html('Letovo Assistant')}"
+            '<body class="site home"><main class="page">'
+            '<section class="hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Веб-платформа</span>'
+            '<h1>Letovo Assistant</h1>'
+            '<p class="lead">Современный сайт для работы с материалами, сменами, поиском, персональными настройками и диалогами с AI.</p>'
+            f'<p class="muted">Сервис открыт по адресу <code>{escape(self.settings.public_web_base_url)}</code>. Сайт использует отдельные логин и пароль, а общими с ботами остаются только база материалов и RAG-память.</p>'
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/login">Войти</a><a class="ghost-link" href="/register">Создать аккаунт</a></div>'
+            '</div>'
+            '<div class="hero-side summary">'
+            '<div class="summary-tile"><span class="meta-label">Формат</span><strong>Один интерфейс</strong><span class="meta-note">Чат, настройки, смены и поддержка внутри сайта.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Данные</span><strong>Общая память</strong><span class="meta-note">Материалы и RAG-поиск общие с ботами через одну базу.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Аккаунты</span><strong>Отдельный вход</strong><span class="meta-note">Сайт не синхронизирует пользователей с ботами.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">AI</span><strong>Гибкая настройка</strong><span class="meta-note">API token, prompt и профиль ответа вынесены в отдельный раздел.</span></div>'
+            '</div>'
+            '</section>'
+            f'<section class="entry-grid">{feature_cards}</section>'
+            '</main></body></html>'
+        )
+
+    def _render_public_nav(self, active: str) -> str:
+        items = [
+            ("dashboard", "/app", "Чат"),
+            ("settings", "/settings", "Настройки"),
+            ("settings-api", "/settings/api", "AI и API"),
+            ("support", "/support", "Поддержка"),
+        ]
+        links = []
+        for key, href, label in items:
+            if active == key:
+                links.append(f'<span class="pill">{escape(label)}</span>')
+            else:
+                links.append(f'<a class="ghost-link" href="{href}">{escape(label)}</a>')
+        return (
+            '<div class="toolbar">'
+            f'<div class="switcher">{"".join(links)}</div>'
+            '<div class="toolbar">'
+            '<a class="ghost-link" href="/">Главная</a>'
+            '<form method="post" action="/logout" class="inline-form"><button type="submit" class="ghost">Выйти</button></form>'
+            "</div>"
+            "</div>"
+        )
+
+    def _render_command_buttons(self, context: PublicPlatformContext, commands: list[dict[str, Any]]) -> str:
+        if not commands:
+            return '<p class="muted">Дополнительные команды пока не настроены.</p>'
+        buttons = []
+        for row in commands[:18]:
+            command_name = str(row.get("command_name") or "").strip()
+            if not command_name:
+                continue
+            buttons.append(
+                '<form method="post" action="/command/run" class="command-form">'
+                f'<input type="hidden" name="command_name" value="{escape(command_name)}">'
+                f'<button type="submit" class="ghost">{escape(command_name)}</button>'
+                '</form>'
+            )
+        return f'<div class="command-grid">{"".join(buttons)}</div>'
+
+    def _render_department_action_card(
+        self,
+        context: PublicPlatformContext,
+        session: PublicSiteSession,
+        action: dict[str, str] | None,
+    ) -> str:
+        user_department = context.app_service.get_user_department(session.user_id)
+        if not action and user_department != "проект 11":
+            return ""
+        if user_department == "проект 11":
+            options_html = "".join(
+                f'<option value="{escape(label)}">{escape(label)}</option>'
+                for label in context.app_service.all_department_action_labels()
+            )
+            return (
+                '<section class="card primary">'
+                '<span class="eyebrow">Проект 11</span>'
+                '<h2>Любой спец-режим на сегодня</h2>'
+                f'<p class="muted">{escape(context.app_service.department_action_picker_prompt())}</p>'
+                '<form method="post" action="/department/action" class="stack">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Режим<select name="action_label" required>{options_html}</select></label>'
+                '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+                '<button type="submit">Запустить анализ</button>'
+                '</form>'
+                '</section>'
+            )
+        if action is None:
+            return ""
+        return (
+            '<section class="card primary">'
+            f'<span class="eyebrow">{escape(str(action.get("department") or ""))}</span>'
+            f'<h2>{escape(str(action.get("title") or "Спец-режим"))}</h2>'
+            '<p class="muted">Базовый лимит этого режима обновляется каждый день. Если для вас доступны дополнительные спец-запросы, они будут учтены автоматически.</p>'
+            '<form method="post" action="/department/action" class="stack">'
+            '<input type="hidden" name="return_to" value="dashboard">'
+            '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+            f'<button type="submit">{escape(str(action.get("button") or "Запустить"))}</button>'
+            '</form>'
+            '</section>'
+        )
+
+    def _render_managed_choice_card(
+        self,
+        context: PublicPlatformContext,
+        pending: ManagedAnswerChoice | None,
+    ) -> str:
+        if pending is None:
+            return ""
+        buttons_html = "".join(
+            '<form method="post" action="/managed-answer" class="choice-form">'
+            f'<input type="hidden" name="option_id" value="{option.option_id}">'
+            f'<button type="submit">{escape(option.option_label)}</button>'
+            '</form>'
+            for option in pending.options
+        )
+        return (
+            '<section class="card spotlight managed-choice">'
+            '<span class="eyebrow">Готовые ответы</span>'
+            '<h2>Выберите вариант</h2>'
+            f'<p class="muted">Вопрос: {escape(pending.question)}</p>'
+            f'<div class="choice-grid">{buttons_html}</div>'
+            '</section>'
+        )
+
+    def _render_dashboard(self, context: PublicPlatformContext, session: PublicSiteSession) -> str:
+        banned, ban_reason = context.app_service.is_banned(session.user_id)
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        department = context.app_service.get_user_department(session.user_id)
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        bonus_requests = context.app_service.get_user_bonus_requests(session.user_id)
+        shifts = context.app_service.list_shifts(limit=60)
+        custom_commands = [row for row in context.app_service.list_custom_commands() if int(row.get("enabled") or 0)]
+        recent_events = context.app_service.list_user_events(user_id=session.user_id, limit=16)
+        user_stats = context.app_service.get_user_statistics(str(session.user_id))
+        stats_row = user_stats[0] if user_stats else {}
+        department_options_html = "".join(
+            f'<option value="{escape(option)}"{" selected" if option == department else ""}>{escape(option)}</option>'
+            for option in context.app_service.department_options()
+        )
+        action = context.app_service.department_action_for_user(session.user_id)
+        notice_html = f'<div class="banner ok">{escape(session.notice_text)}</div>' if session.notice_text else ""
+        error_html = f'<div class="banner err">{escape(session.error_text)}</div>' if session.error_text else ""
+        managed_choice_html = self._render_managed_choice_card(context, session.chat_session.pending_managed_choice)
+
+        if banned:
+            reason_text = ban_reason or "Причина не указана."
+            content_html = (
+                '<section class="card blocked">'
+                '<span class="eyebrow">Доступ ограничен</span>'
+                '<h2>Ваш аккаунт заблокирован</h2>'
+                f'<p class="lead">{escape(reason_text)}</p>'
+                '<p class="muted">Если это ошибка, откройте страницу поддержки и опишите ситуацию.</p>'
+                '</section>'
+            )
+        elif not department:
+            content_html = (
+                '<section class="card spotlight">'
+                '<span class="eyebrow">Обязательный шаг</span>'
+                '<h2>Выберите департамент</h2>'
+                '<p class="lead">После выбора департамента сайт активирует правильные лимиты, профиль ответов и специальные режимы именно для вашего рабочего пространства.</p>'
+                '<form method="post" action="/department/save" class="grid one">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Департамент<select name="department" required>{department_options_html}</select></label>'
+                '<div class="action-wrap"><button type="submit">Сохранить и открыть чат</button></div>'
+                '</form>'
+                '</section>'
+            )
+        else:
+            chat_html = self._render_chat_panel(context, session)
+            result_panel = self._render_result_panel(session)
+            commands_html = self._render_command_buttons(context, custom_commands)
+            shifts_html = self._render_shift_list(shifts)
+            events_html = self._render_event_list(recent_events)
+            action_html = self._render_department_action_card(context, session, action)
+            content_html = (
+                '<section class="workspace">'
+                '<section class="chat-column">'
+                '<section class="card chat-shell">'
+                '<div class="chat-shell-head"><div><span class="eyebrow">Чат</span><h2>Главный диалог</h2><p class="muted">Задавайте вопросы по материалам, ищите факты по датам и сменам, запускайте готовые сценарии и получайте текстовые ответы прямо в ленте.</p></div>'
+                f'<div class="chat-metrics"><span class="metric"><strong>{bonus_requests}</strong><small>бонусов</small></span><span class="metric"><strong>{int(stats_row.get("charged_today_count") or 0)}</strong><small>списаний</small></span></div></div>'
+                '<form method="post" action="/ask" class="chat-composer">'
+                '<textarea name="question" rows="4" placeholder="Например: что происходило в смене 01-07-2025..11-07-2025 и есть ли материалы по World News 24?" required></textarea>'
+                '<div class="composer-actions"><button type="submit">Отправить вопрос</button></div>'
+                '</form>'
+                f'{managed_choice_html}'
+                f'{chat_html}'
+                '</section>'
+                f'{result_panel}'
+                '</section>'
+                '<aside class="sidebar-column">'
+                '<section class="card side-panel sticky-panel">'
+                '<span class="eyebrow">Сводка</span><h2>Рабочая панель</h2>'
+                f'<div class="mini-list"><div class="mini-item"><strong>Департамент</strong><span>{escape(department)}</span></div><div class="mini-item"><strong>Prompt профиль</strong><span>{escape(prompt_profile_label)}</span></div><div class="mini-item"><strong>API token</strong><span>{"подключен" if has_api else "не подключен"}</span></div><div class="mini-item"><strong>Сегодня</strong><span>Списано запросов: {int(stats_row.get("charged_today_count") or 0)}</span></div></div>'
+                '</section>'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Быстрые действия</span><h2>Поиск и материалы</h2>'
+                '<details class="tool-panel" open><summary>Быстрый поиск</summary><form method="post" action="/search" class="stack compact-form"><input name="query" placeholder="Ключевые слова, люди, компании" required><button type="submit">Искать</button></form></details>'
+                '<details class="tool-panel"><summary>Дата или смена</summary><form method="post" action="/list" class="stack compact-form"><input name="query" placeholder="21-03-2026 или название смены" required><button type="submit">Показать список</button></form></details>'
+                '<details class="tool-panel"><summary>Материал по ID</summary><form method="post" action="/file" class="stack compact-form"><input name="item_id" inputmode="numeric" placeholder="Например 123" required><button type="submit">Показать материал</button></form><p class="muted">Сайт показывает извлеченную информацию, а не сам файл.</p></details>'
+                '<details class="tool-panel"><summary>Промокод</summary><form method="post" action="/promo" class="stack compact-form"><input name="code" placeholder="Введите промокод" required><button type="submit">Активировать</button></form></details>'
+                '</section>'
+                f'{action_html}'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Дополнительно</span><h2>Команды, смены и события</h2>'
+                f'<details class="tool-panel" open><summary>Кастомные команды</summary>{commands_html}</details>'
+                f'<details class="tool-panel"><summary>Смены</summary>{shifts_html}</details>'
+                f'<details class="tool-panel"><summary>Последние события</summary>{events_html}</details>'
+                '</section>'
+                '</aside>'
+                '</section>'
+            )
+
+        return (
+            f"{self._head_html('Рабочее пространство')}"
+            '<body class="site"><main class="page">'
+            '<section class="hero dashboard-hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Рабочее пространство</span>'
+            '<h1>Letovo Assistant</h1>'
+            f'<p class="lead">{escape(context.subtitle)}</p>'
+            '<p class="muted">Главная страница сайта: чат, быстрый поиск, работа со сменами, история запросов и доступ к общей RAG-памяти материалов.</p>'
+            '</div>'
+            '<div class="hero-side summary">'
+            f'<div class="summary-tile"><span class="meta-label">Пользователь</span><strong>{escape(session.display_name)}</strong><span class="meta-note">@{escape(session.username or "site-user")}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Департамент</span><strong>{escape(department or "не выбран")}</strong><span class="meta-note">Профиль: {escape(prompt_profile_label)}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">API token</span><strong>{"подключен" if has_api else "не подключен"}</strong><span class="meta-note">AI-настройки на отдельной странице</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Лимиты</span><strong>{bonus_requests}</strong><span class="meta-note">Сегодня списано: {int(stats_row.get("charged_today_count") or 0)}</span></div>'
+            '</div>'
+            '</section>'
+            f'{self._render_public_nav("dashboard")}'
+            f'{notice_html}{error_html}{content_html}'
+            '</main></body></html>'
+        )
+
+    async def _handle_login(self, request: web.Request) -> web.StreamResponse:
+        fields = await self._read_simple_fields(request)
+        username = fields.get("username", "").strip().lower()
+        password = fields.get("password", "").strip()
+        if not username:
+            return web.Response(
+                text=self._render_login_page(error_text="Введите логин сайта.", username=username),
+                content_type="text/html",
+                status=400,
+            )
+        if not password:
+            return web.Response(
+                text=self._render_login_page(error_text="Введите пароль сайта.", username=username),
+                content_type="text/html",
+                status=400,
+            )
+
+        context, account = self._find_site_account(username)
+        if context is None or account is None:
+            return web.Response(
+                text=self._render_login_page(
+                    error_text="Такой сайт-аккаунт не найден или еще не активирован.",
+                    username=username,
+                ),
+                content_type="text/html",
+                status=403,
+            )
+        if not verify_password(password, str(account.get("password_hash") or "")):
+            return web.Response(
+                text=self._render_login_page(error_text="Неверный логин или пароль сайта.", username=username),
+                content_type="text/html",
+                status=403,
+            )
+
+        try:
+            user_id = int(account.get("platform_user_id") or 0)
+        except (TypeError, ValueError):
+            user_id = 0
+        if user_id == 0:
+            return web.Response(
+                text=self._render_login_page(
+                    error_text="Аккаунт сайта настроен некорректно. Обратитесь к команде проекта.",
+                    username=username,
+                ),
+                content_type="text/html",
+                status=400,
+            )
+
+        banned, ban_reason = context.app_service.is_banned(user_id)
+        if banned:
+            reason_text = f"Причина: {ban_reason}" if ban_reason else "Доступ заблокирован."
+            return web.Response(
+                text=self._render_login_page(error_text=reason_text, username=username),
+                content_type="text/html",
+                status=403,
+            )
+
+        resolved_name = str(account.get("display_name") or "").strip() or self._resolve_display_name(context, user_id)
+        return self._open_public_session(
+            context=context,
+            user_id=user_id,
+            display_name=resolved_name,
+            username=username,
+            notice_text="Вход выполнен. Рабочее пространство сайта готово.",
+        )
+
+    async def _handle_register(self, request: web.Request) -> web.StreamResponse:
+        fields = await self._read_simple_fields(request)
+        username = fields.get("username", "").strip().lower()
+        password = fields.get("password", "").strip()
+        password_repeat = fields.get("password_repeat", "").strip()
+        display_name = fields.get("display_name", "").strip()
+        context = self._site_context()
+
+        if len(username) < 3:
+            return web.Response(
+                text=self._render_register_page(
+                    error_text="Логин должен содержать минимум 3 символа.",
+                    username=username,
+                    display_name=display_name,
+                ),
+                content_type="text/html",
+                status=400,
+            )
+        if any(ch.isspace() for ch in username):
+            return web.Response(
+                text=self._render_register_page(
+                    error_text="Логин не должен содержать пробелы.",
+                    username=username,
+                    display_name=display_name,
+                ),
+                content_type="text/html",
+                status=400,
+            )
+        if len(password) < 8:
+            return web.Response(
+                text=self._render_register_page(
+                    error_text="Пароль должен содержать минимум 8 символов.",
+                    username=username,
+                    display_name=display_name,
+                ),
+                content_type="text/html",
+                status=400,
+            )
+        if password != password_repeat:
+            return web.Response(
+                text=self._render_register_page(
+                    error_text="Пароли не совпадают. Регистрация не выполнена.",
+                    username=username,
+                    display_name=display_name,
+                ),
+                content_type="text/html",
+                status=400,
+            )
+
+        existing_context, existing_account = self._find_site_account_any(username)
+        if existing_context is not None and existing_account is not None:
+            return web.Response(
+                text=self._render_register_page(
+                    error_text="Такой логин уже занят.",
+                    username=username,
+                    display_name=display_name,
+                ),
+                content_type="text/html",
+                status=409,
+            )
+
+        user_id = context.app_service.next_site_platform_user_id()
+        resolved_name = display_name or f"Пользователь {username}"
+        context.app_service.upsert_site_account(
+            username=username,
+            password_hash=hash_password(password),
+            display_name=resolved_name,
+            platform_user_id=user_id,
+            is_active=True,
+        )
+        context.app_service.log_event(
+            user_id=user_id,
+            chat_id=user_id,
+            event_type="site_registration",
+            sender_profile=SenderProfile(first_name=resolved_name),
+            details={"platform": context.slug, "surface": "web"},
+        )
+        return self._open_public_session(
+            context=context,
+            user_id=user_id,
+            display_name=resolved_name,
+            username=username,
+            notice_text="Регистрация завершена. Аккаунт сайта готов к работе.",
+        )
+
+    def _open_public_session(
+        self,
+        *,
+        context: PublicPlatformContext,
+        user_id: int,
+        display_name: str,
+        username: str,
+        notice_text: str,
+    ) -> web.StreamResponse:
+        session_id = secrets.token_urlsafe(32)
+        self._sessions[session_id] = PublicSiteSession(
+            session_id=session_id,
+            platform_slug=context.slug,
+            user_id=user_id,
+            display_name=display_name,
+            chat_session=ChatSession(recent_messages=deque(maxlen=max(self.settings.conversation_context_messages * 2, 12))),
+            username=username,
+            notice_text=notice_text,
+        )
+        response = web.HTTPFound("/app")
+        response.set_cookie(
+            self.SESSION_COOKIE_NAME,
+            session_id,
+            httponly=True,
+            samesite="Lax",
+            path="/",
+            secure=self._cookie_secure(),
+        )
+        raise response
+
+    def _render_public_nav(self, active: str) -> str:
+        items = [
+            ("dashboard", "/app", "Чат"),
+            ("settings", "/settings", "Настройки"),
+            ("settings-api", "/settings/api", "AI и API"),
+            ("support", "/support", "Поддержка"),
+        ]
+        links = []
+        for key, href, label in items:
+            if active == key:
+                links.append(f'<span class="pill">{escape(label)}</span>')
+            else:
+                links.append(f'<a class="ghost-link" href="{href}">{escape(label)}</a>')
+        return (
+            '<div class="toolbar">'
+            f'<div class="switcher">{"".join(links)}</div>'
+            '<div class="toolbar">'
+            '<a class="ghost-link" href="/">Главная</a>'
+            '<form method="post" action="/logout" class="inline-form"><button type="submit" class="ghost">Выйти</button></form>'
+            "</div>"
+            "</div>"
+        )
+
+    def _render_landing(self, *, error_text: str) -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        feature_cards = (
+            '<section class="entry telegram"><span class="pill">Чат</span><h2>Один рабочий экран</h2><p>Диалог, поиск по материалам, смены, история ответов и быстрые действия собраны в одном интерфейсе.</p><p class="muted">Сайт одинаково удобно работает на телефоне и на компьютере.</p></section>'
+            '<section class="entry vk"><span class="pill">Настройки</span><h2>Глубокая кастомизация</h2><p>Отдельные страницы для профиля, AI-настроек, API token, prompt и персонального режима работы.</p><p class="muted">Вход и регистрация сайта полностью отдельные от ботов.</p></section>'
+            '<section class="entry telegram"><span class="pill">Поддержка</span><h2>Связь с администрацией</h2><p>Если что-то сломалось, можно открыть отдельный диалог поддержки, который сразу виден команде проекта.</p><p class="muted">Вся история обращений сохраняется прямо в базе сайта.</p></section>'
+        )
+        return (
+            f"{self._head_html('Letovo Assistant')}"
+            '<body class="site home"><main class="page">'
+            '<section class="hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Веб-платформа</span>'
+            '<h1>Letovo Assistant</h1>'
+            '<p class="lead">Современный сайт для работы с материалами, сменами, поиском, персональными настройками и диалогами с AI.</p>'
+            f'<p class="muted">Сервис открыт по адресу <code>{escape(self.settings.public_web_base_url)}</code>. Сайт использует отдельные логин и пароль, а общими с ботами остаются только база материалов и RAG-память.</p>'
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/login">Войти</a><a class="ghost-link" href="/register">Создать аккаунт</a></div>'
+            '</div>'
+            '<div class="hero-side summary">'
+            '<div class="summary-tile"><span class="meta-label">Формат</span><strong>Один интерфейс</strong><span class="meta-note">Чат, настройки, смены и поддержка внутри сайта.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Данные</span><strong>Общая память</strong><span class="meta-note">Материалы и RAG-поиск общие с ботами через одну базу.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Аккаунты</span><strong>Отдельный вход</strong><span class="meta-note">Сайт не синхронизирует пользователей с ботами.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">AI</span><strong>Гибкая настройка</strong><span class="meta-note">API token, prompt и профиль ответа вынесены в отдельный раздел.</span></div>'
+            '</div>'
+            '</section>'
+            f'<section class="entry-grid">{feature_cards}</section>'
+            '</main></body></html>'
+        )
+
+    def _render_command_buttons(self, context: PublicPlatformContext, commands: list[dict[str, Any]]) -> str:
+        if not commands:
+            return '<p class="muted">Дополнительные команды пока не настроены.</p>'
+        buttons = []
+        for row in commands[:18]:
+            command_name = str(row.get("command_name") or "").strip()
+            if not command_name:
+                continue
+            buttons.append(
+                '<form method="post" action="/command/run" class="command-form">'
+                f'<input type="hidden" name="command_name" value="{escape(command_name)}">'
+                f'<button type="submit" class="ghost">{escape(command_name)}</button>'
+                '</form>'
+            )
+        return f'<div class="command-grid">{"".join(buttons)}</div>'
+
+    def _render_department_action_card(
+        self,
+        context: PublicPlatformContext,
+        session: PublicSiteSession,
+        action: dict[str, str] | None,
+    ) -> str:
+        user_department = context.app_service.get_user_department(session.user_id)
+        if not action and user_department != "проект 11":
+            return ""
+        if user_department == "проект 11":
+            options_html = "".join(
+                f'<option value="{escape(label)}">{escape(label)}</option>'
+                for label in context.app_service.all_department_action_labels()
+            )
+            return (
+                '<section class="card primary">'
+                '<span class="eyebrow">Проект 11</span>'
+                '<h2>Любой спец-режим на сегодня</h2>'
+                f'<p class="muted">{escape(context.app_service.department_action_picker_prompt())}</p>'
+                '<form method="post" action="/department/action" class="stack">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Режим<select name="action_label" required>{options_html}</select></label>'
+                '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+                '<button type="submit">Запустить анализ</button>'
+                '</form>'
+                '</section>'
+            )
+        if action is None:
+            return ""
+        return (
+            '<section class="card primary">'
+            f'<span class="eyebrow">{escape(str(action.get("department") or ""))}</span>'
+            f'<h2>{escape(str(action.get("title") or "Спец-режим"))}</h2>'
+            '<p class="muted">Базовый лимит этого режима обновляется каждый день. Если для вас доступны дополнительные спец-запросы, они будут учтены автоматически.</p>'
+            '<form method="post" action="/department/action" class="stack">'
+            '<input type="hidden" name="return_to" value="dashboard">'
+            '<label>Вопрос<textarea name="question" rows="4" placeholder="Сформулируйте запрос для спец-режима" required></textarea></label>'
+            f'<button type="submit">{escape(str(action.get("button") or "Запустить"))}</button>'
+            '</form>'
+            '</section>'
+        )
+
+    def _render_managed_choice_card(
+        self,
+        context: PublicPlatformContext,
+        pending: ManagedAnswerChoice | None,
+    ) -> str:
+        if pending is None:
+            return ""
+        buttons_html = "".join(
+            '<form method="post" action="/managed-answer" class="choice-form">'
+            f'<input type="hidden" name="option_id" value="{option.option_id}">'
+            f'<button type="submit">{escape(option.option_label)}</button>'
+            '</form>'
+            for option in pending.options
+        )
+        return (
+            '<section class="card spotlight managed-choice">'
+            '<span class="eyebrow">Готовые ответы</span>'
+            '<h2>Выберите вариант</h2>'
+            f'<p class="muted">Вопрос: {escape(pending.question)}</p>'
+            f'<div class="choice-grid">{buttons_html}</div>'
+            '</section>'
+        )
+
+    def _render_dashboard(self, context: PublicPlatformContext, session: PublicSiteSession) -> str:
+        banned, ban_reason = context.app_service.is_banned(session.user_id)
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        department = context.app_service.get_user_department(session.user_id)
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        bonus_requests = context.app_service.get_user_bonus_requests(session.user_id)
+        shifts = context.app_service.list_shifts(limit=60)
+        custom_commands = [row for row in context.app_service.list_custom_commands() if int(row.get("enabled") or 0)]
+        recent_events = context.app_service.list_user_events(user_id=session.user_id, limit=16)
+        user_stats = context.app_service.get_user_statistics(str(session.user_id))
+        stats_row = user_stats[0] if user_stats else {}
+        department_options_html = "".join(
+            f'<option value="{escape(option)}"{" selected" if option == department else ""}>{escape(option)}</option>'
+            for option in context.app_service.department_options()
+        )
+        action = context.app_service.department_action_for_user(session.user_id)
+        notice_html = f'<div class="banner ok">{escape(session.notice_text)}</div>' if session.notice_text else ""
+        error_html = f'<div class="banner err">{escape(session.error_text)}</div>' if session.error_text else ""
+        managed_choice_html = self._render_managed_choice_card(context, session.chat_session.pending_managed_choice)
+        blocked_html = ""
+
+        if banned:
+            reason_text = ban_reason or "Причина не указана."
+            content_html = (
+                '<section class="card blocked">'
+                '<span class="eyebrow">Доступ ограничен</span>'
+                '<h2>Ваш аккаунт заблокирован</h2>'
+                f'<p class="lead">{escape(reason_text)}</p>'
+                '<p class="muted">Если это ошибка, откройте страницу поддержки и опишите ситуацию.</p>'
+                '</section>'
+            )
+        elif not department:
+            content_html = (
+                '<section class="card spotlight">'
+                '<span class="eyebrow">Обязательный шаг</span>'
+                '<h2>Выберите департамент</h2>'
+                '<p class="lead">После выбора департамента сайт активирует правильные лимиты, профиль ответов и специальные режимы именно для вашего рабочего пространства.</p>'
+                '<form method="post" action="/department/save" class="grid one">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Департамент<select name="department" required>{department_options_html}</select></label>'
+                '<div class="action-wrap"><button type="submit">Сохранить и открыть чат</button></div>'
+                '</form>'
+                '</section>'
+            )
+        else:
+            chat_html = self._render_chat_panel(context, session)
+            result_panel = self._render_result_panel(session)
+            commands_html = self._render_command_buttons(context, custom_commands)
+            shifts_html = self._render_shift_list(shifts)
+            events_html = self._render_event_list(recent_events)
+            action_html = self._render_department_action_card(context, session, action)
+            content_html = (
+                '<section class="workspace">'
+                '<section class="chat-column">'
+                '<section class="card chat-shell">'
+                '<div class="chat-shell-head"><div><span class="eyebrow">Чат</span><h2>Главный диалог</h2><p class="muted">Задавайте вопросы по материалам, ищите факты по датам и сменам, запускайте готовые сценарии и получайте текстовые ответы прямо в ленте.</p></div>'
+                f'<div class="chat-metrics"><span class="metric"><strong>{bonus_requests}</strong><small>бонусов</small></span><span class="metric"><strong>{int(stats_row.get("charged_today_count") or 0)}</strong><small>списаний</small></span></div></div>'
+                '<form method="post" action="/ask" class="chat-composer">'
+                '<textarea name="question" rows="4" placeholder="Например: что происходило в смене 01-07-2025..11-07-2025 и есть ли материалы по World News 24?" required></textarea>'
+                '<div class="composer-actions"><button type="submit">Отправить вопрос</button></div>'
+                '</form>'
+                f'{managed_choice_html}'
+                f'{chat_html}'
+                '</section>'
+                f'{result_panel}'
+                '</section>'
+                '<aside class="sidebar-column">'
+                '<section class="card side-panel sticky-panel">'
+                '<span class="eyebrow">Сводка</span><h2>Рабочая панель</h2>'
+                f'<div class="mini-list"><div class="mini-item"><strong>Департамент</strong><span>{escape(department)}</span></div><div class="mini-item"><strong>Prompt профиль</strong><span>{escape(prompt_profile_label)}</span></div><div class="mini-item"><strong>API token</strong><span>{"подключен" if has_api else "не подключен"}</span></div><div class="mini-item"><strong>Сегодня</strong><span>Списано запросов: {int(stats_row.get("charged_today_count") or 0)}</span></div></div>'
+                '</section>'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Быстрые действия</span><h2>Поиск и материалы</h2>'
+                '<details class="tool-panel" open><summary>Быстрый поиск</summary><form method="post" action="/search" class="stack compact-form"><input name="query" placeholder="Ключевые слова, люди, компании" required><button type="submit">Искать</button></form></details>'
+                '<details class="tool-panel"><summary>Дата или смена</summary><form method="post" action="/list" class="stack compact-form"><input name="query" placeholder="21-03-2026 или название смены" required><button type="submit">Показать список</button></form></details>'
+                '<details class="tool-panel"><summary>Материал по ID</summary><form method="post" action="/file" class="stack compact-form"><input name="item_id" inputmode="numeric" placeholder="Например 123" required><button type="submit">Показать материал</button></form><p class="muted">Сайт показывает извлеченную информацию, а не сам файл.</p></details>'
+                '<details class="tool-panel"><summary>Промокод</summary><form method="post" action="/promo" class="stack compact-form"><input name="code" placeholder="Введите промокод" required><button type="submit">Активировать</button></form></details>'
+                '</section>'
+                f'{action_html}'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Дополнительно</span><h2>Команды, смены и события</h2>'
+                f'<details class="tool-panel" open><summary>Кастомные команды</summary>{commands_html}</details>'
+                f'<details class="tool-panel"><summary>Смены</summary>{shifts_html}</details>'
+                f'<details class="tool-panel"><summary>Последние события</summary>{events_html}</details>'
+                '</section>'
+                '</aside>'
+                '</section>'
+            )
+
+        return (
+            f"{self._head_html('Рабочее пространство')}"
+            '<body class="site"><main class="page">'
+            '<section class="hero dashboard-hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Рабочее пространство</span>'
+            '<h1>Letovo Assistant</h1>'
+            f'<p class="lead">{escape(context.subtitle)}</p>'
+            '<p class="muted">Главная страница сайта: чат, быстрый поиск, работа со сменами, история запросов и доступ к общей RAG-памяти материалов.</p>'
+            '</div>'
+            '<div class="hero-side summary">'
+            f'<div class="summary-tile"><span class="meta-label">Пользователь</span><strong>{escape(session.display_name)}</strong><span class="meta-note">@{escape(session.username or "site-user")}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Департамент</span><strong>{escape(department or "не выбран")}</strong><span class="meta-note">Профиль: {escape(prompt_profile_label)}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">API token</span><strong>{"подключен" if has_api else "не подключен"}</strong><span class="meta-note">AI-настройки на отдельной странице</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Лимиты</span><strong>{bonus_requests}</strong><span class="meta-note">Сегодня списано: {int(stats_row.get("charged_today_count") or 0)}</span></div>'
+            '</div>'
+            '</section>'
+            f'{self._render_public_nav("dashboard")}'
+            f'{notice_html}{error_html}{blocked_html}{content_html}'
+            '</main></body></html>'
+        )
+
+    async def _handle_support_send(self, request: web.Request) -> web.StreamResponse:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        message_text = fields.get("message", "").strip()
+        if not session.username:
+            self._set_error(session, "Сессия сайта устарела. Войдите заново, чтобы написать в поддержку.")
+            raise web.HTTPFound("/login")
+        if not message_text:
+            self._set_error(session, "Опишите проблему, вопрос или ошибку.")
+            return self._support_response(context, session, status=400)
+        context.app_service.create_site_support_message(
+            username=session.username,
+            site_user_id=session.user_id,
+            display_name=session.display_name,
+            sender_role="user",
+            message_text=message_text,
+        )
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="site_support_message",
+            sender_profile=self._sender_profile(session),
+            details={"surface": "web", "username": session.username, "message": message_text[:500]},
+        )
+        self._set_notice(session, "Сообщение отправлено администрации.")
+        raise web.HTTPFound("/support")
+
+    async def _handle_login(self, request: web.Request) -> web.StreamResponse:
+        fields = await self._read_simple_fields(request)
+        username = fields.get("username", "").strip().lower()
+        password = fields.get("password", "").strip()
+        if not username:
+            return web.Response(text=self._render_login_page(error_text="Введите логин сайта.", username=username), content_type="text/html", status=400)
+        if not password:
+            return web.Response(text=self._render_login_page(error_text="Введите пароль сайта.", username=username), content_type="text/html", status=400)
+        context, account = self._find_site_account(username)
+        if context is None or account is None:
+            return web.Response(
+                text=self._render_login_page(error_text="Такой сайт-аккаунт не найден или еще не активирован.", username=username),
+                content_type="text/html",
+                status=403,
+            )
+        if not verify_password(password, str(account.get("password_hash") or "")):
+            return web.Response(
+                text=self._render_login_page(error_text="Неверный логин или пароль сайта.", username=username),
+                content_type="text/html",
+                status=403,
+            )
+        try:
+            user_id = int(account.get("platform_user_id") or 0)
+        except (TypeError, ValueError):
+            user_id = 0
+        if user_id == 0:
+            return web.Response(
+                text=self._render_login_page(error_text="Аккаунт сайта настроен некорректно. Обратитесь к команде проекта.", username=username),
+                content_type="text/html",
+                status=400,
+            )
+        banned, ban_reason = context.app_service.is_banned(user_id)
+        if banned:
+            reason_text = f"Причина: {ban_reason}" if ban_reason else "Доступ заблокирован."
+            return web.Response(text=self._render_login_page(error_text=reason_text, username=username), content_type="text/html", status=403)
+        resolved_name = str(account.get("display_name") or "").strip() or self._resolve_display_name(context, user_id)
+        return self._open_public_session(
+            context=context,
+            user_id=user_id,
+            display_name=resolved_name,
+            username=username,
+            notice_text="Вход выполнен. Добро пожаловать в рабочее пространство сайта.",
+        )
+
+    async def _handle_register(self, request: web.Request) -> web.StreamResponse:
+        fields = await self._read_simple_fields(request)
+        username = fields.get("username", "").strip().lower()
+        password = fields.get("password", "").strip()
+        password_repeat = fields.get("password_repeat", "").strip()
+        display_name = fields.get("display_name", "").strip()
+        context = self._site_context()
+        if len(username) < 3:
+            return web.Response(
+                text=self._render_register_page(error_text="Логин должен содержать минимум 3 символа.", username=username, display_name=display_name),
+                content_type="text/html",
+                status=400,
+            )
+        if any(ch.isspace() for ch in username):
+            return web.Response(
+                text=self._render_register_page(error_text="Логин не должен содержать пробелы.", username=username, display_name=display_name),
+                content_type="text/html",
+                status=400,
+            )
+        if len(password) < 8:
+            return web.Response(
+                text=self._render_register_page(error_text="Пароль должен содержать минимум 8 символов.", username=username, display_name=display_name),
+                content_type="text/html",
+                status=400,
+            )
+        if password != password_repeat:
+            return web.Response(
+                text=self._render_register_page(error_text="Пароли не совпадают. Регистрация не выполнена.", username=username, display_name=display_name),
+                content_type="text/html",
+                status=400,
+            )
+        existing_context, existing_account = self._find_site_account_any(username)
+        if existing_context is not None and existing_account is not None:
+            return web.Response(
+                text=self._render_register_page(error_text="Такой логин уже занят.", username=username, display_name=display_name),
+                content_type="text/html",
+                status=409,
+            )
+        user_id = context.app_service.next_site_platform_user_id()
+        resolved_name = display_name or f"Пользователь {username}"
+        context.app_service.upsert_site_account(
+            username=username,
+            password_hash=hash_password(password),
+            display_name=resolved_name,
+            platform_user_id=user_id,
+            is_active=True,
+        )
+        context.app_service.log_event(
+            user_id=user_id,
+            chat_id=user_id,
+            event_type="site_registration",
+            sender_profile=SenderProfile(first_name=resolved_name),
+            details={"platform": context.slug, "surface": "web"},
+        )
+        return self._open_public_session(
+            context=context,
+            user_id=user_id,
+            display_name=resolved_name,
+            username=username,
+            notice_text="Регистрация завершена. Сайт-аккаунт создан и готов к работе.",
+        )
+
+    def _open_public_session(
+        self,
+        *,
+        context: PublicPlatformContext,
+        user_id: int,
+        display_name: str,
+        username: str,
+        notice_text: str,
+    ) -> web.StreamResponse:
+        session_id = secrets.token_urlsafe(32)
+        self._sessions[session_id] = PublicSiteSession(
+            session_id=session_id,
+            platform_slug=context.slug,
+            user_id=user_id,
+            display_name=display_name,
+            chat_session=ChatSession(recent_messages=deque(maxlen=max(self.settings.conversation_context_messages * 2, 12))),
+            username=username,
+            notice_text=notice_text,
+        )
+        response = web.HTTPFound("/app")
+        response.set_cookie(self.SESSION_COOKIE_NAME, session_id, httponly=True, samesite="Lax", secure=self._cookie_secure(), path="/")
+        raise response
+
+    async def _handle_account_save(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        display_name = fields.get("display_name", "").strip()
+        if not display_name:
+            self._set_error(session, "Введите отображаемое имя для сайта.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        updated = context.app_service.update_site_account(session.username, display_name=display_name)
+        if not updated:
+            self._set_error(session, "Не удалось обновить профиль сайта.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        session.display_name = display_name
+        self._set_notice(session, "Профиль сайта обновлен.")
+        return self._page_response(context, session, page=fields.get("return_to", "settings"))
+
+    async def _handle_password_save(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        current_password = fields.get("current_password", "").strip()
+        new_password = fields.get("new_password", "").strip()
+        new_password_repeat = fields.get("new_password_repeat", "").strip()
+        account = self._site_account(context, session)
+        if account is None:
+            self._set_error(session, "Сайт-аккаунт не найден. Войдите заново.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        if not verify_password(current_password, str(account.get("password_hash") or "")):
+            self._set_error(session, "Текущий пароль введен неверно.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        if len(new_password) < 8:
+            self._set_error(session, "Новый пароль должен содержать минимум 8 символов.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        if new_password != new_password_repeat:
+            self._set_error(session, "Новые пароли не совпадают.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        context.app_service.update_site_account(session.username, password_hash=hash_password(new_password))
+        self._set_notice(session, "Пароль сайта обновлен.")
+        return self._page_response(context, session, page=fields.get("return_to", "settings"))
+
+    async def _handle_department_save(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        department_raw = fields.get("department", "").strip()
+        department = context.app_service.normalize_department(department_raw)
+        if department is None:
+            self._set_error(session, "Выберите департамент из списка.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        context.app_service.save_user_department(session.user_id, department)
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="department_selected",
+            sender_profile=self._sender_profile(session),
+            details={"department": department, "surface": "web"},
+        )
+        self._set_notice(session, f"Департамент сохранен: {department}.")
+        return self._page_response(context, session, page=fields.get("return_to", "settings"))
+
+    async def _handle_api_save(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        if not self._ensure_department_selected(context, session):
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        api_key = fields.get("api_key", "").strip()
+        if not api_key:
+            self._set_error(session, "Введите API token.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="settings",
+            sender_profile=self._sender_profile(session),
+            details={"command": "web_set_api", "surface": "web"},
+        )
+        ok, error_text = context.app_service.validate_user_api_key(api_key)
+        if not ok:
+            context.app_service.save_user_api_error(session.user_id, error_text or "unknown error")
+            self._set_error(session, f"API token не прошел проверку.\n\nТекст ошибки: {(error_text or 'unknown error')[:400]}")
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        has_saved_prompt = bool((prefs.get("custom_prompt") or "").strip())
+        context.app_service.save_user_api_key(session.user_id, api_key)
+        text = "Ваш API token сохранен и проверен. Для вас включен безлимит."
+        if has_saved_prompt:
+            text += " Ранее сохраненный prompt снова активирован."
+        self._set_notice(session, text)
+        return self._page_response(context, session, page=fields.get("return_to", "settings-api"))
+
+    async def _handle_api_delete(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        if not self._ensure_department_selected(context, session):
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="settings",
+            sender_profile=self._sender_profile(session),
+            details={"command": "web_delete_api", "surface": "web"},
+        )
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        had_prompt = bool((prefs.get("custom_prompt") or "").strip())
+        context.app_service.clear_user_api_key(session.user_id)
+        text = "Ваш API token удален. Безлимит отключен."
+        if had_prompt:
+            text = "Ваш API token удален. Безлимит отключен, пользовательский prompt сохранен, но не будет применяться, пока вы снова не добавите API token."
+        self._set_notice(session, text)
+        return self._page_response(context, session, page=fields.get("return_to", "settings-api"))
+
+    async def _handle_prompt_save(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        if not self._ensure_department_selected(context, session):
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        prompt_text = fields.get("prompt_text", "").strip()
+        if not prompt_text:
+            self._set_error(session, "Введите пользовательский prompt.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="settings",
+            sender_profile=self._sender_profile(session),
+            details={"command": "web_set_prompt", "surface": "web"},
+        )
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        if not context.app_service.get_active_api_key(prefs):
+            self._set_error(session, "Сначала добавьте рабочий API token.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        context.app_service.save_user_prompt(session.user_id, prompt_text)
+        self._set_notice(session, "Ваш пользовательский prompt сохранен.")
+        return self._page_response(context, session, page=fields.get("return_to", "settings-api"))
+
+    async def _handle_prompt_delete(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        if not self._ensure_department_selected(context, session):
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="settings",
+            sender_profile=self._sender_profile(session),
+            details={"command": "web_delete_prompt", "surface": "web"},
+        )
+        context.app_service.clear_user_prompt(session.user_id)
+        self._set_notice(session, "Ваш пользовательский prompt удален.")
+        return self._page_response(context, session, page=fields.get("return_to", "settings-api"))
+
+    async def _handle_prompt_profile_save(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        if not self._ensure_department_selected(context, session):
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        profile_label = fields.get("prompt_profile", "").strip()
+        normalized = context.app_service.normalize_prompt_profile(profile_label)
+        if normalized is None:
+            self._set_error(session, "Выберите один из доступных профилей prompt.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings-api"), status=400)
+        context.app_service.save_user_prompt_profile(session.user_id, normalized)
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="settings",
+            sender_profile=self._sender_profile(session),
+            details={"command": "web_prompt_profile", "profile": normalized, "surface": "web"},
+        )
+        self._set_notice(session, f"Профиль prompt переключен на: {context.app_service.PROMPT_PROFILE_LABELS.get(normalized, normalized)}.")
+        return self._page_response(context, session, page=fields.get("return_to", "settings-api"))
+
+    async def _handle_access_request(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        fields = await self._read_simple_fields(request)
+        if not self._ensure_department_selected(context, session):
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        request_name = fields.get("request_name", "").strip()
+        reason = fields.get("reason", "").strip()
+        request_type = fields.get("request_type", "").strip() or "daily_limit"
+        if not request_name:
+            self._set_error(session, "Укажите имя заявки.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        if not reason:
+            self._set_error(session, "Опишите причину заявки.")
+            return self._page_response(context, session, page=fields.get("return_to", "settings"), status=400)
+        mode_bucket = None
+        if request_type == "department_mode":
+            mode_bucket = context.app_service.department_mode_bucket_for_user(
+                session.user_id,
+                context.app_service.get_user_department(session.user_id) or "",
+            )
+        request_id = context.app_service.create_access_request(
+            user_id=session.user_id,
+            request_name=request_name,
+            reason=reason,
+            request_type=request_type,
+            mode_bucket=mode_bucket,
+        )
+        context.app_service.log_event(
+            user_id=session.user_id,
+            chat_id=session.user_id,
+            event_type="access_request",
+            sender_profile=self._sender_profile(session),
+            details={
+                "request_id": request_id,
+                "reason": reason[:500],
+                "request_type": request_type,
+                "mode_bucket": mode_bucket or "",
+                "surface": "web",
+            },
+        )
+        self._set_notice(session, f"Запрос #{request_id} отправлен.")
+        return self._page_response(context, session, page=fields.get("return_to", "settings"))
+
+    def _render_authenticated_shell(
+        self,
+        *,
+        title: str,
+        context: PublicPlatformContext,
+        session: PublicSiteSession,
+        active: str,
+        lead: str,
+        body_html: str,
+    ) -> str:
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        department = context.app_service.get_user_department(session.user_id) or "не выбран"
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        bonus_requests = context.app_service.get_user_bonus_requests(session.user_id)
+        user_stats = context.app_service.get_user_statistics(str(session.user_id))
+        stats_row = user_stats[0] if user_stats else {}
+        notice_html = f'<div class="banner ok">{escape(session.notice_text)}</div>' if session.notice_text else ""
+        error_html = f'<div class="banner err">{escape(session.error_text)}</div>' if session.error_text else ""
+        return (
+            f"{self._head_html(title)}"
+            "<body class=\"site\"><main class=\"page\">"
+            '<section class="hero dashboard-hero">'
+            '<div class="hero-copy">'
+            '<span class="eyebrow">Letovo Assistant</span>'
+            f'<h1>{escape(title)}</h1>'
+            f'<p class="lead">{escape(lead)}</p>'
+            '<p class="muted">Сайт работает независимо от аккаунтов в ботах: общими остаются только материалы, смены и память поиска.</p>'
+            "</div>"
+            '<div class="hero-side summary">'
+            f'<div class="summary-tile"><span class="meta-label">Аккаунт</span><strong>{escape(session.display_name)}</strong><span class="meta-note">@{escape(session.username or "site-user")}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Департамент</span><strong>{escape(department)}</strong><span class="meta-note">Профиль: {escape(prompt_profile_label)}</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">API token</span><strong>{"подключен" if has_api else "не подключен"}</strong><span class="meta-note">AI-настройки на отдельной странице</span></div>'
+            f'<div class="summary-tile"><span class="meta-label">Лимиты</span><strong>{bonus_requests}</strong><span class="meta-note">Сегодня списано: {int(stats_row.get("charged_today_count") or 0)}</span></div>'
+            "</div>"
+            "</section>"
+            f"{self._render_public_nav(active)}"
+            f"{notice_html}{error_html}"
+            f"{body_html}"
+            "</main></body></html>"
+        )
+
+    def _support_response(self, context: PublicPlatformContext, session: PublicSiteSession, *, status: int = 200) -> web.Response:
+        messages = context.app_service.list_site_support_messages(session.username, limit=80) if session.username else []
+        log_rows: list[str] = []
+        if not messages:
+            log_rows.append(
+                '<article class="chat-row assistant latest"><div class="chat-bubble"><div class="chat-meta"><span>Поддержка</span><span>старт</span></div><div class="chat-title">Диалог готов</div><p>Опишите ошибку, вопрос или пожелание. Ответ администрации появится прямо в этой ленте.</p></div></article>'
+            )
+        else:
+            for message in messages:
+                is_admin = str(message.get("sender_role") or "").strip().lower() == "admin"
+                label = "Администрация" if is_admin else (session.display_name or "Вы")
+                role_class = "assistant" if is_admin else "user"
+                extra_class = " latest" if is_admin else ""
+                log_rows.append(
+                    f'<article class="chat-row {role_class}{extra_class}"><div class="chat-bubble">'
+                    f'<div class="chat-meta"><span>{escape(label)}</span><span>{escape(str(message.get("created_at") or "-"))}</span></div>'
+                    f'<p>{escape(str(message.get("message_text") or ""))}</p>'
+                    '</div></article>'
+                )
+        body_html = (
+            '<section class="workspace">'
+            '<section class="chat-column">'
+            '<section class="card chat-shell">'
+            '<div class="chat-shell-head"><div><span class="eyebrow">Поддержка</span><h2>Связь с администрацией</h2><p class="muted">Если на сайте возникла ошибка или нужна помощь, напишите сюда. Весь диалог виден команде проекта в отдельной админ-панели.</p></div>'
+            f'<div class="chat-metrics"><span class="metric"><strong>{len(messages)}</strong><small>сообщений</small></span><span class="metric"><strong>{escape(session.username or "-")}</strong><small>логин</small></span></div></div>'
+            f'<div class="chat-log">{"".join(log_rows)}</div>'
+            '<form method="post" action="/support/send" class="chat-composer">'
+            '<textarea name="message" rows="4" placeholder="Опишите проблему, приложите шаги воспроизведения, расскажите что ожидали увидеть" required></textarea>'
+            '<div class="composer-actions"><button type="submit">Отправить сообщение</button></div>'
+            '</form>'
+            '</section>'
+            '</section>'
+            '<aside class="sidebar-column">'
+            '<section class="card side-panel sticky-panel"><span class="eyebrow">Как писать в поддержку</span><h2>Чтобы ответ пришел быстрее</h2>'
+            '<div class="mini-list">'
+            '<div class="mini-item"><strong>Что произошло</strong><span>Опишите ошибку простыми словами: что нажали и что получили в ответ.</span></div>'
+            '<div class="mini-item"><strong>Когда это было</strong><span>Если есть, укажите дату, смену, ID материала или формулировку запроса.</span></div>'
+            '<div class="mini-item"><strong>Что ожидали</strong><span>Это помогает быстрее понять, где именно поведение сайта отличается от ожидаемого.</span></div>'
+            '</div></section>'
+            '</aside>'
+            '</section>'
+        )
+        return web.Response(
+            text=self._render_authenticated_shell(
+                title="Поддержка",
+                context=context,
+                session=session,
+                active="support",
+                lead="Отдельный чат для ошибок, вопросов и связи с администрацией сайта.",
+                body_html=body_html,
+            ),
+            content_type="text/html",
+            status=status,
+        )
+
+    def _settings_response(self, context: PublicPlatformContext, session: PublicSiteSession, *, status: int = 200) -> web.Response:
+        account = self._site_account(context, session) or {}
+        department = context.app_service.get_user_department(session.user_id)
+        department_options_html = "".join(
+            f'<option value="{escape(option)}"{" selected" if option == department else ""}>{escape(option)}</option>'
+            for option in context.app_service.department_options()
+        )
+        stats_html = escape(context.app_service.build_user_settings_text(session.user_id))
+        body_html = (
+            '<section class="grid-layout">'
+            '<section class="card side-panel">'
+            '<span class="eyebrow">Аккаунт</span><h2>Профиль сайта</h2>'
+            '<p class="muted">Эти настройки относятся только к веб-версии и не меняют аккаунты в ботах.</p>'
+            '<form method="post" action="/settings/account/save" class="stack">'
+            '<input type="hidden" name="return_to" value="settings">'
+            f'<label>Логин сайта<input value="{escape(session.username)}" readonly></label>'
+            f'<label>Отображаемое имя<input name="display_name" value="{escape(str(account.get("display_name") or session.display_name))}" placeholder="Как подписывать вас на сайте" required></label>'
+            '<button type="submit">Сохранить профиль</button>'
+            '</form>'
+            '<form method="post" action="/settings/password/save" class="stack">'
+            '<input type="hidden" name="return_to" value="settings">'
+            '<label>Текущий пароль<input type="password" name="current_password" autocomplete="current-password" required></label>'
+            '<label>Новый пароль<input type="password" name="new_password" autocomplete="new-password" required></label>'
+            '<label>Повтор нового пароля<input type="password" name="new_password_repeat" autocomplete="new-password" required></label>'
+            '<button type="submit">Обновить пароль</button>'
+            '</form>'
+            '</section>'
+            '<section class="card side-panel">'
+            '<span class="eyebrow">Рабочее пространство</span><h2>Персонализация</h2>'
+            '<p class="muted">Выберите департамент, чтобы сайт подстраивал ответы и специальные режимы под ваш профиль.</p>'
+            '<form method="post" action="/department/save" class="stack">'
+            '<input type="hidden" name="return_to" value="settings">'
+            f'<label>Департамент<select name="department" required>{department_options_html}</select></label>'
+            '<button type="submit">Сохранить департамент</button>'
+            '</form>'
+            '<form method="post" action="/requests/create" class="stack">'
+            '<input type="hidden" name="return_to" value="settings">'
+            '<label>Имя заявки<input name="request_name" placeholder="Например: нужен дополнительный доступ" required></label>'
+            '<label>Тип<select name="request_type"><option value="daily_limit">Обычный лимит</option><option value="department_mode">Спец-режим департамента</option></select></label>'
+            '<label>Причина<textarea name="reason" rows="4" placeholder="Опишите, зачем вам нужен дополнительный доступ" required></textarea></label>'
+            '<button type="submit">Отправить заявку</button>'
+            '</form>'
+            f'<pre class="pre compact-pre">{stats_html}</pre>'
+            '</section>'
+            '</section>'
+        )
+        return web.Response(
+            text=self._render_authenticated_shell(
+                title="Настройки сайта",
+                context=context,
+                session=session,
+                active="settings",
+                lead="Гибкая настройка профиля сайта, департамента и личного рабочего пространства.",
+                body_html=body_html,
+            ),
+            content_type="text/html",
+            status=status,
+        )
+
+    def _api_settings_response(self, context: PublicPlatformContext, session: PublicSiteSession, *, status: int = 200) -> web.Response:
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        prompt_options_html = "".join(
+            f'<option value="{escape(label)}"{" selected" if label == prompt_profile_label else ""}>{escape(label)}</option>'
+            for label in context.app_service.prompt_profile_options()
+        )
+        custom_prompt = str(prefs.get("custom_prompt") or "")
+        api_state_html = (
+            f'<div class="mini-item"><strong>Статус API token</strong><span>{"Подключен и участвует в безлимите" if has_api else "Не подключен"}</span></div>'
+            f'<div class="mini-item"><strong>Профиль prompt</strong><span>{escape(prompt_profile_label)}</span></div>'
+            f'<div class="mini-item"><strong>Пользовательский prompt</strong><span>{"Сохранен" if custom_prompt.strip() else "Не задан"}</span></div>'
+        )
+        body_html = (
+            '<section class="grid-layout">'
+            '<section class="card side-panel">'
+            '<span class="eyebrow">AI и API</span><h2>Личный API token</h2>'
+            '<p class="muted">Здесь можно подключить собственный ключ и управлять AI-поведением отдельно от остальных пользователей.</p>'
+            '<form method="post" action="/settings/api/save" class="stack">'
+            '<input type="hidden" name="return_to" value="settings-api">'
+            '<label>OpenAI API token<input type="password" name="api_key" placeholder="sk-..." autocomplete="off" required></label>'
+            '<button type="submit">Сохранить API token</button>'
+            '</form>'
+            '<form method="post" action="/settings/api/delete" class="inline-form">'
+            '<input type="hidden" name="return_to" value="settings-api">'
+            '<button type="submit" class="ghost">Удалить API token</button>'
+            '</form>'
+            f'<div class="mini-list">{api_state_html}</div>'
+            '</section>'
+            '<section class="card side-panel">'
+            '<span class="eyebrow">Кастомизация ответа</span><h2>Prompt и стиль</h2>'
+            '<form method="post" action="/settings/profile/save" class="stack">'
+            '<input type="hidden" name="return_to" value="settings-api">'
+            f'<label>Профиль prompt<select name="prompt_profile">{prompt_options_html}</select></label>'
+            '<button type="submit">Сохранить профиль</button>'
+            '</form>'
+            '<form method="post" action="/settings/prompt/save" class="stack">'
+            '<input type="hidden" name="return_to" value="settings-api">'
+            f'<label>Пользовательский prompt<textarea name="prompt_text" rows="8" placeholder="Опишите стиль ответа, ограничения, предпочтения по тону и структуре">{escape(custom_prompt)}</textarea></label>'
+            '<button type="submit">Сохранить prompt</button>'
+            '</form>'
+            '<form method="post" action="/settings/prompt/delete" class="inline-form">'
+            '<input type="hidden" name="return_to" value="settings-api">'
+            '<button type="submit" class="ghost">Удалить prompt</button>'
+            '</form>'
+            '</section>'
+            '</section>'
+        )
+        return web.Response(
+            text=self._render_authenticated_shell(
+                title="AI и API",
+                context=context,
+                session=session,
+                active="settings-api",
+                lead="Отдельная страница для API token, пользовательского prompt и глубокой кастомизации ответов.",
+                body_html=body_html,
+            ),
+            content_type="text/html",
+            status=status,
+        )
+
+    def _render_landing(self, *, error_text: str) -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        feature_cards = (
+            '<section class="entry telegram"><span class="pill">Чат</span><h2>Диалог в одном окне</h2><p>Задавайте вопросы, просматривайте историю ответов и работайте с памятью материалов в едином интерфейсе.</p><p class="muted">Интерфейс одинаково удобно выглядит на телефоне и на компьютере.</p></section>'
+            '<section class="entry vk"><span class="pill">Настройки</span><h2>Гибкая кастомизация</h2><p>Отдельные страницы для профиля сайта, AI-настроек, API token, prompt и режимов работы.</p><p class="muted">Аккаунты сайта живут отдельно, а память материалов общая.</p></section>'
+            '<section class="entry telegram"><span class="pill">Поддержка</span><h2>Связь с администрацией</h2><p>Ошибки и вопросы можно отправить прямо из сайта, а ответы команды проекта придут в отдельный диалог поддержки.</p><p class="muted">Поддержка и ответы сохраняются в общей базе сайта.</p></section>'
+        )
+        return (
+            f"{self._head_html('Letovo Assistant')}"
+            "<body class=\"site home\"><main class=\"page\">"
+            "<section class=\"hero\">"
+            "<div class=\"hero-copy\">"
+            "<span class=\"eyebrow\">Веб-платформа</span>"
+            "<h1>Letovo Assistant</h1>"
+            "<p class=\"lead\">Современный сайт для работы с материалами, сменами, поиском, персональными настройками и диалогами с AI.</p>"
+            f"<p class=\"muted\">Сервис открыт по адресу <code>{escape(self.settings.public_web_base_url)}</code>. Вход и регистрация на сайте полностью отдельные, а память материалов и поиска синхронизирована с ботами через общую базу.</p>"
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/login">Войти</a><a class="ghost-link" href="/register">Создать аккаунт</a></div>'
+            "</div>"
+            '<div class="hero-side summary">'
+            '<div class="summary-tile"><span class="meta-label">Формат</span><strong>Один интерфейс</strong><span class="meta-note">Чат, настройки, смены и поддержка внутри сайта.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Данные</span><strong>Общая память</strong><span class="meta-note">Материалы и RAG-поиск общие с ботами.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">Аккаунты</span><strong>Отдельный вход</strong><span class="meta-note">Регистрация и логин сайта живут отдельно от аккаунтов в ботах.</span></div>'
+            '<div class="summary-tile"><span class="meta-label">AI</span><strong>Гибкая настройка</strong><span class="meta-note">API token, prompt и профиль ответа вынесены в отдельный раздел.</span></div>'
+            "</div>"
+            "</section>"
+            f'<section class="entry-grid">{feature_cards}</section>'
+            "</main></body></html>"
+        )
+
+    def _render_login_page(self, *, error_text: str, username: str = "") -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        return (
+            f"{self._head_html('Вход в Letovo Assistant')}"
+            "<body class=\"site home\"><main class=\"page\">"
+            "<section class=\"hero\">"
+            "<div class=\"hero-copy\">"
+            "<span class=\"eyebrow\">Вход</span>"
+            "<h1>Сайт-аккаунт</h1>"
+            "<p class=\"lead\">Войдите под отдельным логином сайта, чтобы открыть чат, настройки, историю запросов и поддержку.</p>"
+            "<p class=\"muted\">Если аккаунт еще не создан, зарегистрируйтесь на отдельной странице. Для сайта используются свои логин и пароль.</p>"
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/">На главную</a><a class="ghost-link" href="/register">Регистрация</a></div>'
+            "</div>"
+            '<div class="hero-side"><form method="post" action="/login" class="card auth-form">'
+            "<h2>Вход в сайт</h2>"
+            f'<label>Логин сайта<input name="username" value="{escape(username)}" placeholder="Например user_web" autocomplete="username" required></label>'
+            '<label>Пароль сайта<input type="password" name="password" autocomplete="current-password" required></label>'
+            '<p class="hint">После входа откроется рабочее пространство с общими материалами и отдельными настройками сайта.</p>'
+            '<button type="submit">Войти</button>'
+            "</form></div>"
+            "</section>"
+            "</main></body></html>"
+        )
+
+    def _render_register_page(self, *, error_text: str, username: str = "", display_name: str = "") -> str:
+        error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
+        return (
+            f"{self._head_html('Регистрация в Letovo Assistant')}"
+            "<body class=\"site home\"><main class=\"page\">"
+            "<section class=\"hero\">"
+            "<div class=\"hero-copy\">"
+            "<span class=\"eyebrow\">Регистрация</span>"
+            "<h1>Создать сайт-аккаунт</h1>"
+            "<p class=\"lead\">После регистрации сайт сразу откроет личное рабочее пространство: чат, настройки, AI-профиль и поддержку.</p>"
+            "<p class=\"muted\">Пароль хранится только в виде хеша, а логин и история сайта не связаны с аккаунтами в ботах.</p>"
+            f"{error_html}"
+            '<div class="toolbar"><a class="ghost-link" href="/">На главную</a><a class="ghost-link" href="/login">У меня уже есть аккаунт</a></div>'
+            "</div>"
+            '<div class="hero-side"><form method="post" action="/register" class="card auth-form" id="register-form-page">'
+            "<h2>Регистрация</h2>"
+            f'<label>Отображаемое имя<input name="display_name" value="{escape(display_name)}" placeholder="Как подписывать вас на сайте"></label>'
+            f'<label>Логин сайта<input name="username" value="{escape(username)}" placeholder="Например user_web" autocomplete="username" required></label>'
+            '<label>Пароль<input type="password" name="password" id="register-page-password" autocomplete="new-password" required></label>'
+            '<label>Повтор пароля<input type="password" name="password_repeat" id="register-page-password-repeat" autocomplete="new-password" required></label>'
+            '<div class="banner err" id="register-page-password-error" style="display:none"></div>'
+            '<p class="hint">Минимум 8 символов. После регистрации можно будет поменять и имя, и пароль в настройках сайта.</p>'
+            '<button type="submit">Создать аккаунт</button>'
+            "</form></div>"
+            "</section>"
+            "<script>"
+            "(() => {"
+            "const form = document.getElementById('register-form-page');"
+            "const password = document.getElementById('register-page-password');"
+            "const repeat = document.getElementById('register-page-password-repeat');"
+            "const errorBox = document.getElementById('register-page-password-error');"
+            "if (!form || !password || !repeat || !errorBox) return;"
+            "const syncState = () => { if (password.value === repeat.value) { errorBox.style.display = 'none'; errorBox.textContent = ''; } };"
+            "password.addEventListener('input', syncState);"
+            "repeat.addEventListener('input', syncState);"
+            "form.addEventListener('submit', (event) => { if (password.value !== repeat.value) { event.preventDefault(); errorBox.textContent = 'Пароли не совпадают. Регистрация не выполнена.'; errorBox.style.display = 'block'; repeat.focus(); } });"
+            "})();"
+            "</script>"
+            "</main></body></html>"
+        )
+
+    def _render_dashboard(self, context: PublicPlatformContext, session: PublicSiteSession) -> str:
+        banned, ban_reason = context.app_service.is_banned(session.user_id)
+        prefs = context.app_service.get_user_preferences(session.user_id)
+        department = context.app_service.get_user_department(session.user_id)
+        prompt_profile = context.app_service.get_prompt_profile(prefs)
+        prompt_profile_label = context.app_service.PROMPT_PROFILE_LABELS.get(prompt_profile, "Департаментный")
+        has_api = bool(context.app_service.get_active_api_key(prefs))
+        bonus_requests = context.app_service.get_user_bonus_requests(session.user_id)
+        shifts = context.app_service.list_shifts(limit=60)
+        custom_commands = [row for row in context.app_service.list_custom_commands() if int(row.get("enabled") or 0)]
+        recent_events = context.app_service.list_user_events(user_id=session.user_id, limit=16)
+        user_stats = context.app_service.get_user_statistics(str(session.user_id))
+        stats_row = user_stats[0] if user_stats else {}
+        commands_html = self._render_command_buttons(context, custom_commands)
+        shifts_html = self._render_shift_list(shifts)
+        events_html = self._render_event_list(recent_events)
+        action = context.app_service.department_action_for_user(session.user_id)
+        action_html = self._render_department_action_card(context, session, action)
+        managed_choice_html = self._render_managed_choice_card(context, session.chat_session.pending_managed_choice)
+        blocked_html = ""
+        content_html = ""
+        if banned:
+            reason_text = ban_reason or "Причина не указана."
+            blocked_html = (
+                '<section class="card blocked">'
+                '<span class="eyebrow">Доступ ограничен</span>'
+                '<h2>Ваш аккаунт сайта заблокирован</h2>'
+                f'<p class="lead">{escape(reason_text)}</p>'
+                '<p class="muted">Если это ошибка, воспользуйтесь страницей поддержки после повторного входа или свяжитесь с командой проекта.</p>'
+                '</section>'
+            )
+        elif not department:
+            department_options_html = "".join(
+                f'<option value="{escape(option)}">{escape(option)}</option>'
+                for option in context.app_service.department_options()
+            )
+            content_html = (
+                '<section class="card spotlight">'
+                '<span class="eyebrow">Старт</span>'
+                '<h2>Выберите департамент</h2>'
+                '<p class="lead">Это обязательный шаг: после выбора департамента сайт активирует правильные лимиты, профиль ответов и специальные режимы.</p>'
+                '<form method="post" action="/department/save" class="grid one">'
+                '<input type="hidden" name="return_to" value="dashboard">'
+                f'<label>Департамент<select name="department" required>{department_options_html}</select></label>'
+                '<div class="action-wrap"><button type="submit">Сохранить и открыть чат</button></div>'
+                '</form>'
+                '</section>'
+            )
+        else:
+            chat_html = self._render_chat_panel(context, session)
+            result_panel = self._render_result_panel(session)
+            content_html = (
+                '<section class="workspace">'
+                '<section class="chat-column">'
+                '<section class="card chat-shell">'
+                '<div class="chat-shell-head"><div><span class="eyebrow">Чат</span><h2>Главный диалог</h2><p class="muted">Задавайте вопросы по материалам, ищите факты по датам и сменам, запускайте готовые сценарии и получайте текстовые ответы прямо в ленте.</p></div>'
+                f'<div class="chat-metrics"><span class="metric"><strong>{bonus_requests}</strong><small>бонусов</small></span><span class="metric"><strong>{int(stats_row.get("charged_today_count") or 0)}</strong><small>списаний</small></span></div></div>'
+                '<form method="post" action="/ask" class="chat-composer">'
+                '<textarea name="question" rows="4" placeholder="Например: что происходило в смене 01-07-2025..11-07-2025 и есть ли материалы по World News 24?" required></textarea>'
+                '<div class="composer-actions"><button type="submit">Отправить вопрос</button></div>'
+                '</form>'
+                f'{managed_choice_html}'
+                f'{chat_html}'
+                '</section>'
+                f'{result_panel}'
+                '</section>'
+                '<aside class="sidebar-column">'
+                '<section class="card side-panel sticky-panel">'
+                '<span class="eyebrow">Сводка</span><h2>Рабочая панель</h2>'
+                f'<div class="mini-list"><div class="mini-item"><strong>Департамент</strong><span>{escape(department)}</span></div><div class="mini-item"><strong>Prompt профиль</strong><span>{escape(prompt_profile_label)}</span></div><div class="mini-item"><strong>API token</strong><span>{"подключен" if has_api else "не подключен"}</span></div><div class="mini-item"><strong>Сегодня</strong><span>Списано запросов: {int(stats_row.get("charged_today_count") or 0)}</span></div></div>'
+                '</section>'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Быстрые действия</span><h2>Поиск и материалы</h2>'
+                '<details class="tool-panel" open><summary>Быстрый поиск</summary><form method="post" action="/search" class="stack compact-form"><input name="query" placeholder="Ключевые слова, люди, компании" required><button type="submit">Искать</button></form></details>'
+                '<details class="tool-panel"><summary>Дата или смена</summary><form method="post" action="/list" class="stack compact-form"><input name="query" placeholder="21-03-2026 или название смены" required><button type="submit">Показать список</button></form></details>'
+                '<details class="tool-panel"><summary>Материал по ID</summary><form method="post" action="/file" class="stack compact-form"><input name="item_id" inputmode="numeric" placeholder="Например 123" required><button type="submit">Показать материал</button></form><p class="muted">Сайт показывает извлеченную информацию, а не сам файл.</p></details>'
+                '<details class="tool-panel"><summary>Промокод</summary><form method="post" action="/promo" class="stack compact-form"><input name="code" placeholder="Введите промокод" required><button type="submit">Активировать</button></form></details>'
+                '</section>'
+                f'{action_html}'
+                '<section class="card side-panel">'
+                '<span class="eyebrow">Дополнительно</span><h2>Команды, смены и события</h2>'
+                f'<details class="tool-panel" open><summary>Кастомные команды</summary>{commands_html}</details>'
+                f'<details class="tool-panel"><summary>Смены</summary>{shifts_html}</details>'
+                f'<details class="tool-panel"><summary>Последние события</summary>{events_html}</details>'
+                '</section>'
+                '</aside>'
+                '</section>'
+            )
+        body_html = blocked_html or content_html
+        return self._render_authenticated_shell(
+            title="Рабочее пространство",
+            context=context,
+            session=session,
+            active="dashboard",
+            lead="Главная страница сайта: чат, поиск, быстрые действия и доступ к общей памяти материалов.",
+            body_html=body_html,
+        )
 
     async def _handle_support_send(self, request: web.Request) -> web.StreamResponse:
         context, session = self._require_session(request)
@@ -1690,3 +4255,115 @@ class PublicWebServer:
             "</script>"
             "</main></body></html>"
         )
+
+    def _site_context(self) -> PublicPlatformContext:
+        ordered = self._ordered_platforms()
+        if not ordered:
+            raise RuntimeError("Для сайта не найден ни один активный сервис данных.")
+        return ordered[0]
+
+    def _cookie_secure(self) -> bool:
+        return str(self.settings.public_web_base_url or "").strip().lower().startswith("https://")
+
+    @staticmethod
+    def _normalize_return_to(raw_value: str) -> str:
+        normalized = raw_value.strip().lower()
+        if normalized in {"settings", "account"}:
+            return "settings"
+        if normalized in {"settings-api", "api", "ai"}:
+            return "settings-api"
+        if normalized == "support":
+            return "support"
+        return "dashboard"
+
+    def _page_response(
+        self,
+        context: PublicPlatformContext,
+        session: PublicSiteSession,
+        *,
+        page: str,
+        status: int = 200,
+    ) -> web.Response:
+        normalized = self._normalize_return_to(page)
+        if normalized == "settings":
+            return self._settings_response(context, session, status=status)
+        if normalized == "settings-api":
+            return self._api_settings_response(context, session, status=status)
+        if normalized == "support":
+            return self._support_response(context, session, status=status)
+        return self._dashboard_response(context, session, status=status)
+
+    def _render_public_nav(self, active: str) -> str:
+        items = [
+            ("dashboard", "/app", "Чат"),
+            ("settings", "/settings", "Настройки"),
+            ("settings-api", "/settings/api", "AI и API"),
+            ("support", "/support", "Поддержка"),
+        ]
+        parts = ['<div class="toolbar">', '<div class="toolbar">']
+        for key, href, label in items:
+            if active == key:
+                parts.append(f'<span class="pill">{escape(label)}</span>')
+            else:
+                parts.append(f'<a class="ghost-link" href="{href}">{escape(label)}</a>')
+        parts.append("</div>")
+        parts.append('<div class="toolbar">')
+        parts.append('<a class="ghost-link" href="/">Главная</a>')
+        parts.append('<form method="post" action="/logout" class="inline-form"><button type="submit" class="ghost">Выйти</button></form>')
+        parts.append("</div>")
+        parts.append("</div>")
+        return "".join(parts)
+
+    def _site_account(self, context: PublicPlatformContext, session: PublicSiteSession) -> dict[str, Any] | None:
+        if not session.username:
+            return None
+        return context.app_service.get_site_account_any(session.username)
+
+    async def _handle_root(self, request: web.Request) -> web.StreamResponse:
+        if self._current_session(request) is not None:
+            raise web.HTTPFound("/app")
+        return web.Response(text=self._render_landing(error_text=""), content_type="text/html")
+
+    async def _handle_login_page(self, request: web.Request) -> web.Response:
+        if self._current_session(request) is not None:
+            raise web.HTTPFound("/app")
+        return web.Response(text=self._render_login_page(error_text=""), content_type="text/html")
+
+    async def _handle_register_page(self, request: web.Request) -> web.Response:
+        if self._current_session(request) is not None:
+            raise web.HTTPFound("/app")
+        return web.Response(text=self._render_register_page(error_text=""), content_type="text/html")
+
+    async def _handle_logout(self, request: web.Request) -> web.StreamResponse:
+        session_id = request.cookies.get(self.SESSION_COOKIE_NAME, "").strip()
+        if session_id:
+            self._sessions.pop(session_id, None)
+        response = web.HTTPFound("/login")
+        response.del_cookie(self.SESSION_COOKIE_NAME, path="/")
+        raise response
+
+    def _require_session(self, request: web.Request) -> tuple[PublicPlatformContext, PublicSiteSession]:
+        session = self._current_session(request)
+        if session is None:
+            raise web.HTTPFound("/login")
+        platform_slug = str(request.match_info.get("platform") or session.platform_slug).strip().lower()
+        context = self.platforms.get(platform_slug) or self.platforms.get(session.platform_slug) or self._site_context()
+        if session.platform_slug != context.slug:
+            session.platform_slug = context.slug
+        return context, session
+
+    async def _handle_dashboard(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        return self._dashboard_response(context, session)
+
+    async def _handle_settings_page(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        return self._settings_response(context, session)
+
+    async def _handle_api_settings_page(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        return self._api_settings_response(context, session)
+
+    async def _handle_support_page(self, request: web.Request) -> web.Response:
+        context, session = self._require_session(request)
+        return self._support_response(context, session)

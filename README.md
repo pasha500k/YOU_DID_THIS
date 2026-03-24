@@ -17,7 +17,7 @@
 - `infrastructure/telegram/` - aiogram-бот и Telegram-адаптеры
 - `infrastructure/vk/` - VK-бот на `vk_api`
 - `infrastructure/http/` - отдельная админка и отдельный пользовательский веб-сайт
-- `services/` - SQLite, RAG, OpenAI, медиа-обработка
+- `services/` - PostgreSQL, RAG, OpenAI, медиа-обработка
 
 ## Что умеет система
 
@@ -53,7 +53,7 @@ https://letovoai.ru/
 
 ## Как синхронизируются сайт и боты
 
-- Telegram-бот, VK-бот, админка и пользовательский сайт используют одну SQLite-базу
+- Telegram-бот, VK-бот, админка и пользовательский сайт используют одну PostgreSQL-базу
 - индекс материалов общий
 - смены общие
 - промокоды общие
@@ -203,7 +203,8 @@ eas build --platform ios --profile production-ios
 - `API_VK` - токен VK-бота
 - `VK_GROUP_ID` - id сообщества VK
 - `STORAGE_CHAT_ID` - Telegram-группа хранения материалов
-- `DATABASE_PATH` - путь к SQLite
+- `DATABASE_URL` - строка подключения к PostgreSQL
+- `DATABASE_PATH` - legacy-путь к старой локальной SQLite-базе
 - `MEDIA_CACHE_DIR` - кэш временных файлов
 - `VIDEO_DOWNLOAD_DIR` - папка локальных загрузок видео
 - `LOCAL_UPLOAD_HOST` / `LOCAL_UPLOAD_PORT` - адрес и порт админки
@@ -219,7 +220,7 @@ eas build --platform ios --profile production-ios
 
 ## Заметки
 
-- личные API key и prompts хранятся локально в SQLite
+- личные API key и prompts хранятся в общей PostgreSQL-базе
 - длинное аудио режется по длительности через `ffmpeg`
 - сайт и боты используют один и тот же application/service-слой, поэтому изменения через сайт сразу видны ботам и наоборот
 - если Telegram должен читать обычные сообщения в группах, может понадобиться выключить privacy mode в BotFather

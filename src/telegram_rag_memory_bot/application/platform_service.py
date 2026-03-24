@@ -107,6 +107,21 @@ class PlatformAssistantService(AssistantApplicationService):
     def deactivate_site_account(self, username: str) -> bool:
         return self.rag_service.database.deactivate_site_account(username, platform=self.platform_code)
 
+    def update_site_account(
+        self,
+        username: str,
+        *,
+        display_name: str | None = None,
+        password_hash: str | None = None,
+        is_active: bool | None = None,
+    ) -> bool:
+        return self.rag_service.database.update_site_account(
+            username,
+            display_name=display_name,
+            password_hash=password_hash,
+            is_active=is_active,
+        )
+
     def create_site_support_message(
         self,
         *,

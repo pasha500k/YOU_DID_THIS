@@ -82,6 +82,7 @@ class LocalUploadServer:
                 web.get("/site/admin", self._handle_site_dashboard),
                 web.post("/site/admin/site-accounts/create", self._handle_site_admin_account_create),
                 web.post("/site/admin/site-accounts/delete", self._handle_site_admin_account_delete),
+                web.post("/site/admin/support/reply", self._handle_site_admin_support_reply),
                 web.get("/{platform}", self._handle_platform_redirect),
                 web.get("/{platform}/admin", self._handle_dashboard),
                 web.post("/{platform}/admin/shifts/save", self._handle_shift_save),
@@ -911,6 +912,38 @@ class LocalUploadServer:
                 status=400,
             )
 
+    async def _handle_site_admin_support_reply(self, request: web.Request) -> web.Response:
+        self._ensure_site_authenticated(request)
+        fields = await self._read_simple_fields(request)
+        service = self._site_admin_service()
+        try:
+            username = fields.get("username", "").strip().lower()
+            display_name = fields.get("display_name", "").strip()
+            message_text = fields.get("message_text", "").strip()
+            site_user_id = self._parse_int(fields.get("site_user_id", ""))
+            if not username:
+                raise ValueError("Нужен логин сайта, чтобы ответить пользователю.")
+            if not message_text:
+                raise ValueError("Введите текст ответа для пользователя сайта.")
+            service.create_site_support_message(
+                username=username,
+                site_user_id=site_user_id,
+                display_name=display_name or username,
+                sender_role="admin",
+                message_text=message_text,
+            )
+            service.mark_site_support_read_by_admin(username)
+            return web.Response(
+                text=self._render_site_dashboard(notice_text=f"Ответ для {username} сохранен.", error_text=""),
+                content_type="text/html",
+            )
+        except Exception as exc:
+            return web.Response(
+                text=self._render_site_dashboard(notice_text="", error_text=str(exc)),
+                content_type="text/html",
+                status=400,
+            )
+
     async def _handle_ban_create(self, request: web.Request) -> web.Response:
         self._ensure_site_authenticated(request)
         context = self._platform_context(request)
@@ -1144,6 +1177,7 @@ class LocalUploadServer:
         error_html = f'<div class="banner err">{escape(error_text)}</div>' if error_text else ""
         switch_nav = self._platform_switch_nav(current_slug="site")
         site_accounts = app_service.list_site_accounts(limit=300)
+        support_threads = app_service.list_site_support_threads(limit=80)
         site_account_rows = "".join(
             self._site_account_row(row, access_hidden, self._site_admin_base_path()) for row in site_accounts
         ) or '<tr><td colspan="6">Сайт-аккаунтов пока нет.</td></tr>'
@@ -1151,6 +1185,7 @@ class LocalUploadServer:
         inactive_accounts = max(len(site_accounts) - active_accounts, 0)
         public_site_url = escape(self.settings.public_web_base_url)
         public_site_status = "включен" if getattr(self.settings, "public_web_enabled", False) else "выключен"
+        unread_support = sum(max(int(row.get("unread_count") or 0), 0) for row in support_threads)
         site_account_section = (
             f"<section id=\"site-accounts\" class=\"card\"><h2>Сайт-аккаунты</h2>"
             "<p class=\"hint\">Здесь создаются отдельные логины и пароли для пользовательского сайта. Аккаунты сайта не связаны с Telegram/VK-пользователями, а общей остается только база материалов и память ответов.</p>"
@@ -1161,6 +1196,49 @@ class LocalUploadServer:
             "<label><input type=\"checkbox\" name=\"is_active\" checked> Аккаунт активен</label>"
             "<div><button type=\"submit\">Сохранить сайт-аккаунт</button></div></form>"
             f"<div class=\"table\"><table><thead><tr><th>Логин</th><th>Имя</th><th>Site ID</th><th>Активен</th><th>Обновлен</th><th></th></tr></thead><tbody>{site_account_rows}</tbody></table></div></section>"
+        )
+        support_sections: list[str] = []
+        for row in support_threads:
+            username = str(row.get("username") or "").strip().lower()
+            if not username:
+                continue
+            app_service.mark_site_support_read_by_admin(username)
+            display_name = str(row.get("display_name") or "").strip() or username
+            site_user_id = int(row.get("site_user_id") or 0)
+            unread_count = max(int(row.get("unread_count") or 0), 0)
+            last_message_at = escape(str(row.get("last_message_at") or "-"))
+            messages = app_service.list_site_support_messages(username, limit=12)
+            messages_html = "".join(
+                (
+                    f"<article class=\"support-message {'admin' if str(message.get('sender_role') or '') == 'admin' else 'user'}\">"
+                    f"<div class=\"support-meta\"><strong>{escape(str(message.get('display_name') or username))}</strong>"
+                    f"<span>{escape(str(message.get('created_at') or '-'))}</span></div>"
+                    f"<p>{escape(str(message.get('message_text') or ''))}</p>"
+                    "</article>"
+                )
+                for message in messages
+            ) or '<p class="hint">Сообщений пока нет.</p>'
+            support_sections.append(
+                f"<section class=\"support-thread\">"
+                f"<div class=\"support-thread-head\"><div><h3>{escape(display_name)}</h3><p class=\"hint\">Логин: <code>{escape(username)}</code> · Site ID: {site_user_id or '-'}</p></div>"
+                f"<div class=\"support-badges\"><span class=\"meta-note\">Новых: {unread_count}</span><span class=\"meta-note\">Последнее: {last_message_at}</span></div></div>"
+                f"<div class=\"support-log\">{messages_html}</div>"
+                f"<form method=\"post\" action=\"{self._site_admin_base_path()}/support/reply\" class=\"grid two support-form\">"
+                f"{access_hidden}"
+                f"<input type=\"hidden\" name=\"username\" value=\"{escape(username)}\">"
+                f"<input type=\"hidden\" name=\"display_name\" value=\"{escape(display_name)}\">"
+                f"<input type=\"hidden\" name=\"site_user_id\" value=\"{site_user_id}\">"
+                "<label class=\"full\">Ответ пользователю<textarea name=\"message_text\" rows=\"3\" placeholder=\"Напишите ответ от имени администрации сайта\" required></textarea></label>"
+                "<div class=\"full\"><button type=\"submit\">Отправить ответ</button></div>"
+                "</form>"
+                "</section>"
+            )
+        support_section = (
+            f"<section id=\"support\" class=\"card\"><h2>Поддержка сайта</h2>"
+            "<p class=\"hint\">Здесь видны обращения с публичного сайта и ответы администрации. Пользователь увидит ответ в своем разделе поддержки после обновления страницы.</p>"
+            f"<div class=\"support-overview\"><span class=\"meta-note\">Диалогов: {len(support_threads)}</span><span class=\"meta-note\">Непрочитанных пользовательских сообщений: {unread_support}</span></div>"
+            f"{''.join(support_sections) or '<p class=\"hint\">Обращений пока нет.</p>'}"
+            "</section>"
         )
         return (
             f"{self._head_html('Site Admin')}"
@@ -1178,14 +1256,16 @@ class LocalUploadServer:
             f"<div class=\"meta-card\"><span class=\"meta-label\">Активные</span><strong class=\"meta-value\">{active_accounts}</strong><span class=\"meta-note\">Аккаунты, которым разрешен вход на сайт.</span></div>"
             f"<div class=\"meta-card\"><span class=\"meta-label\">Отключенные</span><strong class=\"meta-value\">{inactive_accounts}</strong><span class=\"meta-note\">Аккаунты, для которых вход временно закрыт.</span></div>"
             f"<div class=\"meta-card\"><span class=\"meta-label\">Публичный сайт</span><strong class=\"meta-value\">{public_site_status}</strong><span class=\"meta-note\">Адрес: {public_site_url}</span></div>"
+            f"<div class=\"meta-card\"><span class=\"meta-label\">Поддержка</span><strong class=\"meta-value\">{len(support_threads)}</strong><span class=\"meta-note\">Новых сообщений: {unread_support}</span></div>"
             "</div>"
             "</div>"
             "</section>"
             f"<div class=\"toolbar\">{switch_nav}<form method=\"post\" action=\"/logout\" class=\"inline-form\"><button type=\"submit\" class=\"ghost\">Выйти</button></form></div>"
             f"{notice_html}{error_html}"
-            "<nav class=\"nav\" aria-label=\"Разделы сайта\"><a href=\"#website\">Сайт</a><a href=\"#site-accounts\">Сайт-аккаунты</a></nav>"
+            "<nav class=\"nav\" aria-label=\"Разделы сайта\"><a href=\"#website\">Сайт</a><a href=\"#site-accounts\">Сайт-аккаунты</a><a href=\"#support\">Поддержка</a></nav>"
             f"<section id=\"website\" class=\"card\"><h2>Публичный сайт</h2><p class=\"hint\">Пользовательский сайт открыт отдельно от админки и работает по адресу <code>{public_site_url}</code>. Через этот раздел можно управлять только самим сайтом и его веб-аккаунтами, не затрагивая Telegram/VK-пользователей.</p><ul class=\"feature-list\"><li>Логины и пароли сайта отдельные.</li><li>Память материалов и поисковый индекс общие с ботами через одну базу данных.</li><li>Сайт-аккаунты можно отдельно отключать, переименовывать и создавать заново.</li></ul></section>"
             f"{site_account_section}"
+            f"{support_section}"
             "</main></body></html>"
         )
 
@@ -1225,6 +1305,7 @@ class LocalUploadServer:
             "button{padding:12px 16px;border:0;border-radius:16px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#fff;font-weight:700;letter-spacing:.01em;cursor:pointer;box-shadow:0 14px 24px rgba(22,103,199,.22);transition:transform .16s ease,box-shadow .16s ease}button:hover{transform:translateY(-1px);box-shadow:0 18px 30px rgba(22,103,199,.26)}button:active{transform:translateY(0)}button.ghost{background:rgba(255,255,255,.8);color:var(--text);border:1px solid var(--line);box-shadow:none}button.danger{background:linear-gradient(135deg,#d36a43,var(--danger));box-shadow:0 14px 24px rgba(193,83,53,.2)}"
             ".actions{display:flex;flex-wrap:wrap;gap:10px}.table{overflow:auto;border:1px solid var(--line);border-radius:20px;background:rgba(255,255,255,.72);box-shadow:inset 0 1px 0 rgba(255,255,255,.7)}table{width:100%;min-width:920px;border-collapse:separate;border-spacing:0;font-size:14px}thead th{position:sticky;top:0;background:rgba(244,240,233,.96);backdrop-filter:blur(12px);z-index:1}th,td{padding:12px 10px;border-top:1px solid rgba(24,32,51,.08);text-align:left;vertical-align:top}th{font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}tbody tr:nth-child(even){background:rgba(248,244,237,.55)}tbody tr:hover{background:rgba(22,103,199,.06)}"
             ".banner{padding:14px 16px;border-radius:18px;margin:0 0 12px;font-weight:700;border:1px solid transparent;box-shadow:var(--shadow-soft)}.ok{background:rgba(227,245,235,.92);border-color:rgba(16,185,129,.24);color:#0d6b45}.err{background:rgba(255,239,234,.94);border-color:rgba(193,83,53,.24);color:#8a2d1d}.auth-page{min-height:100vh;display:grid;place-items:center;padding:32px 20px}.auth-card{width:min(560px,100%);padding:32px}code{background:rgba(24,32,51,.08);padding:2px 6px;border-radius:8px}"
+            ".support-overview{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0 18px}.support-thread{display:grid;gap:14px;padding:18px;border-radius:24px;background:linear-gradient(180deg,rgba(255,255,255,.92),rgba(247,243,236,.96));border:1px solid rgba(24,32,51,.08);box-shadow:var(--shadow-soft);margin:0 0 16px}.support-thread-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.support-badges{display:flex;flex-wrap:wrap;gap:10px}.support-log{display:grid;gap:10px;max-height:360px;overflow:auto;padding-right:4px}.support-message{padding:14px 16px;border-radius:18px;background:rgba(255,255,255,.76);border:1px solid var(--line)}.support-message.admin{background:linear-gradient(135deg,rgba(22,103,199,.12),rgba(15,118,110,.12))}.support-meta{display:flex;justify-content:space-between;gap:10px;align-items:center;margin:0 0 8px;font-size:.8rem;color:var(--muted);font-weight:700}.support-message p{margin:0;white-space:pre-wrap}.support-form textarea{min-height:96px}"
             "@media (max-width:1040px){.hero{grid-template-columns:1fr}.nav{position:static}.meta-grid{grid-template-columns:1fr}}@media (max-width:840px){.two,.three{grid-template-columns:1fr}.page{padding:18px 14px 54px}.card,.entry,.hero-copy,.hero-side,.auth-card{padding:20px}.switcher,.toolbar{flex-direction:column;align-items:stretch}.switcher a,.nav a,.toolbar .inline-form,.toolbar form,.toolbar button{width:100%}.nav{padding:12px}}"
         )
 

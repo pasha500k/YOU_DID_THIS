@@ -147,6 +147,7 @@ class _PostgresConnectionAdapter:
             translated,
             flags=re.IGNORECASE,
         )
+        translated = re.sub(r"\bINTEGER\b", "BIGINT", translated, flags=re.IGNORECASE)
         return translated
 
 
@@ -574,6 +575,43 @@ class Database:
                 """,
                 (normalized_username,),
             )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
+    def update_site_account(
+        self,
+        username: str,
+        *,
+        display_name: str | None = None,
+        password_hash: str | None = None,
+        is_active: bool | None = None,
+    ) -> bool:
+        normalized_username = username.strip().lower()
+        if not normalized_username:
+            return False
+        assignments: list[str] = []
+        params: list[Any] = []
+        if display_name is not None:
+            assignments.append("display_name = ?")
+            params.append(display_name.strip())
+        if password_hash is not None:
+            assignments.append("password_hash = ?")
+            params.append(password_hash.strip())
+        if is_active is not None:
+            assignments.append("is_active = ?")
+            params.append(1 if is_active else 0)
+        if not assignments:
+            return False
+        assignments.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(normalized_username)
+        cursor = self.connection.execute(
+            f"""
+            UPDATE site_accounts
+            SET {", ".join(assignments)}
+            WHERE username = ?
+            """,
+            params,
+        )
         self.connection.commit()
         return cursor.rowcount > 0
 
