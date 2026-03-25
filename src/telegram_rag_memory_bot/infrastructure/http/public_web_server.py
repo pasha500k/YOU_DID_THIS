@@ -4542,7 +4542,7 @@ class PublicWebServer(PublicWebServer):
     async def _handle_root(self, request: web.Request) -> web.StreamResponse:
         if self._current_session(request) is not None:
             raise web.HTTPFound("/app")
-        return web.Response(text=self._render_landing(error_text=""), content_type="text/html")
+        raise web.HTTPFound("/login")
 
     async def _handle_login_page(self, request: web.Request) -> web.Response:
         if self._current_session(request) is not None:
